@@ -5,7 +5,13 @@ import { GitDiffProvider, FileStatus } from './git-diff-provider'
 import { PendingReviewStore, PendingReview, ReviewKey } from './pending-review-store'
 import { toAgentPrompt } from './review-formatter'
 import { GhAuthResolver, AuthStatus } from './gh-auth-resolver'
-import { GitHubClient, InboxResult, OctokitLike } from './github-client'
+import { GitHubClient, InboxResult, OctokitLike, PullRequestDetails, InlineComment, ConversationComment } from './github-client'
+
+type OpenWindowFn = (target: { kind: 'pr-review'; owner: string; repo: string; number: number }) => void
+let openWindowFn: OpenWindowFn | null = null
+export function setOpenWindow(fn: OpenWindowFn): void {
+  openWindowFn = fn
+}
 
 export const CHANNELS = {
   getLocalDiff: 'git:local-diff',
@@ -15,6 +21,10 @@ export const CHANNELS = {
   reviewSubmitToAgent: 'review:submit-to-agent',
   ghAuthStatus: 'gh:auth-status',
   githubListPRs: 'github:list-prs',
+  githubGetPR: 'github:get-pr',
+  githubGetPRDiff: 'github:get-pr-diff',
+  githubGetPRInlineComments: 'github:get-pr-inline-comments',
+  githubGetPRConversation: 'github:get-pr-conversation',
   openPRReview: 'window:open-pr-review'
 } as const
 
@@ -104,11 +114,46 @@ export function registerIpcHandlers(): void {
     return client.listInvolvingPRs()
   })
 
-  // Stub: lands in slice 7 (PR Review window). For now logs so we can verify the click wiring.
+  ipcMain.handle(
+    CHANNELS.githubGetPR,
+    async (_e, args: { owner: string; repo: string; number: number }): Promise<PullRequestDetails> => {
+      const client = await getGithubClient()
+      if (!client) throw new Error('gh CLI is not authenticated')
+      return client.getPR(args.owner, args.repo, args.number)
+    }
+  )
+
+  ipcMain.handle(
+    CHANNELS.githubGetPRDiff,
+    async (_e, args: { owner: string; repo: string; number: number }): Promise<string> => {
+      const client = await getGithubClient()
+      if (!client) throw new Error('gh CLI is not authenticated')
+      return client.getPRDiff(args.owner, args.repo, args.number)
+    }
+  )
+
+  ipcMain.handle(
+    CHANNELS.githubGetPRInlineComments,
+    async (_e, args: { owner: string; repo: string; number: number }): Promise<InlineComment[]> => {
+      const client = await getGithubClient()
+      if (!client) throw new Error('gh CLI is not authenticated')
+      return client.getPRInlineComments(args.owner, args.repo, args.number)
+    }
+  )
+
+  ipcMain.handle(
+    CHANNELS.githubGetPRConversation,
+    async (_e, args: { owner: string; repo: string; number: number }): Promise<ConversationComment[]> => {
+      const client = await getGithubClient()
+      if (!client) throw new Error('gh CLI is not authenticated')
+      return client.getPRConversation(args.owner, args.repo, args.number)
+    }
+  )
+
   ipcMain.handle(
     CHANNELS.openPRReview,
     (_e, args: { owner: string; repo: string; number: number }) => {
-      console.log('TODO open PR review window for', args)
+      if (openWindowFn) openWindowFn({ kind: 'pr-review', ...args })
     }
   )
 }

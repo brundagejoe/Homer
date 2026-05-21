@@ -1,16 +1,23 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { join, resolve } from 'node:path'
-import { registerIpcHandlers } from './ipc'
+import { registerIpcHandlers, setOpenWindow } from './ipc'
 
 const REPO_FLAG = '--repo-path='
+const PR_FLAG = '--pr='
 const PURPOSE_FLAG = '--purpose='
 
-type LaunchTarget =
+export type LaunchTarget =
   | { kind: 'inbox' }
   | { kind: 'local'; repoPath: string }
+  | { kind: 'pr-review'; owner: string; repo: string; number: number }
 
 function resolveLaunchTarget(argv: string[]): LaunchTarget {
+  const prFlag = argv.find(a => a.startsWith(PR_FLAG))
+  if (prFlag) {
+    const [owner, repo, numStr] = prFlag.slice(PR_FLAG.length).split('/')
+    return { kind: 'pr-review', owner, repo, number: Number(numStr) }
+  }
   const explicit = argv.find(a => a.startsWith(REPO_FLAG))
   if (explicit) return { kind: 'local', repoPath: explicit.slice(REPO_FLAG.length) }
   const positional = argv.slice(2).find(a => !a.startsWith('-') && !a.includes('app.asar'))
@@ -20,30 +27,59 @@ function resolveLaunchTarget(argv: string[]): LaunchTarget {
 
 let inboxWindow: BrowserWindow | null = null
 const localWindows = new Map<string, BrowserWindow>()
+const prWindows = new Map<string, BrowserWindow>()
 
-function openWindow(target: LaunchTarget): void {
+function prKey(t: { owner: string; repo: string; number: number }): string {
+  return `${t.owner}/${t.repo}/${t.number}`
+}
+
+function focusExisting(target: LaunchTarget): boolean {
   if (target.kind === 'inbox') {
     if (inboxWindow && !inboxWindow.isDestroyed()) {
       if (inboxWindow.isMinimized()) inboxWindow.restore()
       inboxWindow.focus()
-      return
+      return true
+    }
+  } else if (target.kind === 'local') {
+    const w = localWindows.get(target.repoPath)
+    if (w && !w.isDestroyed()) {
+      if (w.isMinimized()) w.restore()
+      w.focus()
+      return true
     }
   } else {
-    const existing = localWindows.get(target.repoPath)
-    if (existing && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore()
-      existing.focus()
-      return
+    const w = prWindows.get(prKey(target))
+    if (w && !w.isDestroyed()) {
+      if (w.isMinimized()) w.restore()
+      w.focus()
+      return true
     }
   }
+  return false
+}
 
-  const additionalArguments =
-    target.kind === 'inbox'
-      ? [`${PURPOSE_FLAG}inbox`]
-      : [`${PURPOSE_FLAG}local`, `${REPO_FLAG}${target.repoPath}`]
+function openWindow(target: LaunchTarget): void {
+  if (focusExisting(target)) return
 
-  const title =
-    target.kind === 'inbox' ? 'Diff Viewer — Inbox' : `Diff Viewer — ${target.repoPath}`
+  let additionalArguments: string[]
+  let title: string
+  switch (target.kind) {
+    case 'inbox':
+      additionalArguments = [`${PURPOSE_FLAG}inbox`]
+      title = 'Diff Viewer — Inbox'
+      break
+    case 'local':
+      additionalArguments = [`${PURPOSE_FLAG}local`, `${REPO_FLAG}${target.repoPath}`]
+      title = `Diff Viewer — ${target.repoPath}`
+      break
+    case 'pr-review':
+      additionalArguments = [
+        `${PURPOSE_FLAG}pr-review`,
+        `${PR_FLAG}${target.owner}/${target.repo}/${target.number}`
+      ]
+      title = `Diff Viewer — ${target.owner}/${target.repo}#${target.number}`
+      break
+  }
 
   const win = new BrowserWindow({
     width: 1200,
@@ -63,10 +99,16 @@ function openWindow(target: LaunchTarget): void {
     win.on('closed', () => {
       if (inboxWindow === win) inboxWindow = null
     })
-  } else {
+  } else if (target.kind === 'local') {
     localWindows.set(target.repoPath, win)
     win.on('closed', () => {
       if (localWindows.get(target.repoPath) === win) localWindows.delete(target.repoPath)
+    })
+  } else {
+    const key = prKey(target)
+    prWindows.set(key, win)
+    win.on('closed', () => {
+      if (prWindows.get(key) === win) prWindows.delete(key)
     })
   }
 
@@ -96,6 +138,7 @@ if (!app.requestSingleInstanceLock()) {
       optimizer.watchWindowShortcuts(window)
     })
 
+    setOpenWindow(openWindow)
     registerIpcHandlers()
     openWindow(resolveLaunchTarget(process.argv))
 
@@ -110,4 +153,3 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit()
   })
 }
-

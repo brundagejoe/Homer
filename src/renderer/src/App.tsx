@@ -3,9 +3,13 @@ import { PatchDiff } from '@pierre/diffs/react'
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react'
 import type {
   AuthStatus,
+  ConversationComment,
   FileWithPatch,
   InboxResult,
+  InlineComment,
   PendingReview,
+  PrTarget,
+  PullRequestDetails,
   PullRequestSummary,
   LineComment,
   DiffSourceSpec
@@ -23,7 +27,22 @@ export default function App() {
   if (!window.api) {
     return <main style={shellStyle}><header style={statusBarStyle}>window.api is undefined</header></main>
   }
-  return window.api.purpose === 'inbox' ? <InboxView /> : <LocalRoot />
+  switch (window.api.purpose) {
+    case 'inbox':
+      return <InboxView />
+    case 'pr-review':
+      return window.api.prTarget ? <PRReviewView target={window.api.prTarget} /> : <FatalError msg="PR target missing from launch args" />
+    case 'local':
+      return <LocalRoot />
+  }
+}
+
+function FatalError({ msg }: { msg: string }) {
+  return (
+    <main style={shellStyle}>
+      <header style={statusBarStyle}>{msg}</header>
+    </main>
+  )
 }
 
 function LocalRoot() {
@@ -58,6 +77,208 @@ function LocalRoot() {
   }
 
   return <LoadedView repo={status.repo} files={status.files} />
+}
+
+type PRStatus =
+  | { type: 'loading' }
+  | {
+      type: 'loaded'
+      pr: PullRequestDetails
+      files: { path: string; patch: string }[]
+      inline: InlineComment[]
+      conversation: ConversationComment[]
+    }
+  | { type: 'error'; message: string }
+
+function PRReviewView({ target }: { target: PrTarget }) {
+  const [status, setStatus] = useState<PRStatus>({ type: 'loading' })
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([
+      window.api.githubGetPR(target),
+      window.api.githubGetPRDiff(target),
+      window.api.githubGetPRInlineComments(target),
+      window.api.githubGetPRConversation(target)
+    ])
+      .then(([pr, rawDiff, inline, conversation]) => {
+        if (cancelled) return
+        const files = splitDiffByFile(rawDiff)
+        setStatus({ type: 'loaded', pr, files, inline, conversation })
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setStatus({ type: 'error', message: err.message ?? String(err) })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [target.owner, target.repo, target.number])
+
+  if (status.type !== 'loaded') {
+    return (
+      <main style={shellStyle}>
+        <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between' }}>
+          <span>
+            {target.owner}/{target.repo}#{target.number}
+            {status.type === 'loading' && ' — loading…'}
+            {status.type === 'error' && ` — error: ${status.message}`}
+          </span>
+          <GhAuthIndicator />
+        </header>
+      </main>
+    )
+  }
+
+  return <PRReviewLoaded {...status} target={target} />
+}
+
+function splitDiffByFile(raw: string): { path: string; patch: string }[] {
+  if (!raw.trim()) return []
+  const out: { path: string; patch: string }[] = []
+  const lines = raw.split('\n')
+  let start = -1
+  for (let i = 0; i <= lines.length; i++) {
+    const boundary = i === lines.length || lines[i].startsWith('diff --git ')
+    if (!boundary) continue
+    if (start >= 0) {
+      const slice = lines.slice(start, i).join('\n')
+      const match = lines[start].match(/^diff --git a\/(.+?) b\/(.+)$/)
+      const path = match ? match[2] : `file-${out.length}`
+      out.push({ path, patch: slice })
+    }
+    start = i
+  }
+  return out
+}
+
+function PRReviewLoaded({
+  target,
+  pr,
+  files,
+  inline,
+  conversation
+}: {
+  target: PrTarget
+  pr: PullRequestDetails
+  files: { path: string; patch: string }[]
+  inline: InlineComment[]
+  conversation: ConversationComment[]
+}) {
+  const paths = useMemo(() => files.map(f => f.path), [files])
+  const { model } = useFileTree({
+    paths,
+    initialExpansion: 'open',
+    initialSelectedPaths: paths.length > 0 ? [paths[0]] : []
+  })
+  const selectedPaths = useFileTreeSelection(model)
+  const selectedPath = selectedPaths[0] ?? paths[0]
+  const selectedFile = files.find(f => f.path === selectedPath)
+  const inlineForFile = inline.filter(c => c.path === selectedPath)
+
+  const annotations = useMemo(
+    () =>
+      inlineForFile.map(c => ({
+        side: c.side === 'LEFT' ? ('deletions' as const) : ('additions' as const),
+        lineNumber: c.lineNumber,
+        metadata: c
+      })),
+    [inlineForFile]
+  )
+
+  return (
+    <main style={shellStyle}>
+      <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+        <span style={{ flex: 1 }}>
+          <span style={{ fontWeight: 600 }}>
+            {target.owner}/{target.repo}#{pr.number}
+          </span>
+          <span style={{ marginLeft: '0.5rem' }}>{pr.title}</span>
+          <span style={{ color: '#888', marginLeft: '0.5rem' }}>
+            · {pr.author} · {pr.headRef} → {pr.baseRef} · +{pr.additions} −{pr.deletions}
+          </span>
+        </span>
+        <StateBadge state={pr.state} />
+        <GhAuthIndicator />
+      </header>
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        <aside style={treePaneStyle}>
+          <FileTree model={model} />
+        </aside>
+        <section style={{ flex: 1, overflow: 'auto' }}>
+          {pr.body && (
+            <details open style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #eee' }}>
+              <summary style={{ cursor: 'pointer', color: '#555', fontSize: '0.85rem' }}>Description</summary>
+              <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: '0.5rem 0 0' }}>{pr.body}</pre>
+            </details>
+          )}
+          {selectedFile ? (
+            <PatchDiff
+              patch={selectedFile.patch}
+              lineAnnotations={annotations}
+              renderAnnotation={ann => (
+                <div style={inlineAnnotationStyle}>
+                  <div style={{ fontSize: '0.7rem', color: '#888' }}>
+                    {ann.metadata.author} · {new Date(ann.metadata.createdAt).toLocaleString()}
+                  </div>
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{ann.metadata.body}</div>
+                </div>
+              )}
+            />
+          ) : null}
+        </section>
+        <aside style={conversationPaneStyle}>
+          <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Conversation</h3>
+          <div style={{ overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {conversation.length === 0 && inlineForFile.length === 0 && (
+              <div style={{ color: '#888', fontSize: '0.85rem' }}>No comments yet.</div>
+            )}
+            {conversation.map(c => (
+              <div key={`conv-${c.id}`} style={commentCardStyle}>
+                <div style={{ fontSize: '0.75rem', color: '#888' }}>
+                  {c.author} · {new Date(c.createdAt).toLocaleString()}
+                </div>
+                <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{c.body}</div>
+              </div>
+            ))}
+            {inlineForFile.length > 0 && (
+              <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: '#666', marginTop: '0.75rem' }}>
+                Inline on {selectedPath}
+              </div>
+            )}
+            {inlineForFile.map(c => (
+              <div key={`inline-${c.id}`} style={commentCardStyle}>
+                <div style={{ fontSize: '0.75rem', color: '#888' }}>
+                  {c.author} · line {c.lineNumber} ({c.side === 'LEFT' ? 'old' : 'new'}) ·{' '}
+                  {new Date(c.createdAt).toLocaleString()}
+                </div>
+                <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{c.body}</div>
+              </div>
+            ))}
+          </div>
+        </aside>
+      </div>
+    </main>
+  )
+}
+
+const inlineAnnotationStyle: React.CSSProperties = {
+  background: '#fff8c5',
+  border: '1px solid #d4a72c',
+  borderRadius: 4,
+  padding: '0.4rem 0.6rem',
+  margin: '0.25rem 0.5rem'
+}
+
+const conversationPaneStyle: React.CSSProperties = {
+  width: 320,
+  borderLeft: '1px solid #eee',
+  padding: '0.75rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.5rem',
+  background: '#fafafa',
+  flexShrink: 0,
+  overflow: 'hidden'
 }
 
 type InboxStatus =
