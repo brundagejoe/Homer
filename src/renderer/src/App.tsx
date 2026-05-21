@@ -12,7 +12,8 @@ import type {
   PullRequestDetails,
   PullRequestSummary,
   LineComment,
-  DiffSourceSpec
+  ReviewEvent,
+  ReviewTarget
 } from '../../preload'
 
 type Status =
@@ -21,7 +22,9 @@ type Status =
   | { type: 'loaded'; repo: string; files: FileWithPatch[] }
   | { type: 'error'; message: string }
 
-const SOURCE_SPEC: DiffSourceSpec = { type: 'working-tree-vs-head' }
+function localReviewTarget(repoPath: string): ReviewTarget {
+  return { kind: 'local', repoPath, source: { type: 'working-tree-vs-head' } }
+}
 
 export default function App() {
   if (!window.api) {
@@ -164,6 +167,20 @@ function PRReviewLoaded({
   inline: InlineComment[]
   conversation: ConversationComment[]
 }) {
+  const reviewTarget: ReviewTarget = useMemo(
+    () => ({ kind: 'pr', owner: target.owner, repo: target.repo, number: target.number }),
+    [target.owner, target.repo, target.number]
+  )
+
+  const [pending, setPending] = useState<PendingReview | null>(null)
+  const [submitState, setSubmitState] = useState<
+    { kind: 'idle' } | { kind: 'submitting' } | { kind: 'submitted'; url: string } | { kind: 'error'; message: string }
+  >({ kind: 'idle' })
+
+  useEffect(() => {
+    window.api.reviewGet(reviewTarget).then(setPending)
+  }, [reviewTarget])
+
   const paths = useMemo(() => files.map(f => f.path), [files])
   const { model } = useFileTree({
     paths,
@@ -175,6 +192,102 @@ function PRReviewLoaded({
   const selectedFile = files.find(f => f.path === selectedPath)
   const inlineForFile = inline.filter(c => c.path === selectedPath)
 
+  const startReview = () => {
+    const review: PendingReview = {
+      target: reviewTarget,
+      snapshot: { files: files.map(f => ({ ...f, status: 'modified', isBinary: false, oldPath: undefined })) },
+      lineComments: [],
+      summary: '',
+      event: 'COMMENT',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+    setPending(review)
+    window.api.reviewUpsert(review)
+  }
+
+  const updatePending = (next: PendingReview) => {
+    setPending(next)
+    window.api.reviewUpsert(next)
+  }
+
+  const addComment = (path: string) => {
+    if (!pending) return
+    updatePending({
+      ...pending,
+      lineComments: [
+        ...pending.lineComments,
+        { id: crypto.randomUUID(), path, lineNumber: 1, side: 'new', body: '' }
+      ],
+      updatedAt: Date.now()
+    })
+  }
+
+  const addReply = (existing: InlineComment) => {
+    if (!pending) return
+    updatePending({
+      ...pending,
+      lineComments: [
+        ...pending.lineComments,
+        {
+          id: crypto.randomUUID(),
+          path: existing.path,
+          lineNumber: existing.lineNumber,
+          side: existing.side === 'LEFT' ? 'old' : 'new',
+          body: '',
+          inReplyToId: existing.id
+        }
+      ],
+      updatedAt: Date.now()
+    })
+  }
+
+  const editComment = (id: string, patch: Partial<LineComment>) => {
+    if (!pending) return
+    updatePending({
+      ...pending,
+      lineComments: pending.lineComments.map(c => (c.id === id ? { ...c, ...patch } : c)),
+      updatedAt: Date.now()
+    })
+  }
+
+  const removeComment = (id: string) => {
+    if (!pending) return
+    updatePending({
+      ...pending,
+      lineComments: pending.lineComments.filter(c => c.id !== id),
+      updatedAt: Date.now()
+    })
+  }
+
+  const setSummary = (summary: string) => {
+    if (!pending) return
+    updatePending({ ...pending, summary, updatedAt: Date.now() })
+  }
+
+  const setEvent = (event: ReviewEvent) => {
+    if (!pending) return
+    updatePending({ ...pending, event, updatedAt: Date.now() })
+  }
+
+  const submit = async () => {
+    if (!pending) return
+    setSubmitState({ kind: 'submitting' })
+    try {
+      const { url } = await window.api.reviewSubmitToGithub(pending)
+      setSubmitState({ kind: 'submitted', url })
+      setPending(null)
+    } catch (err) {
+      setSubmitState({ kind: 'error', message: (err as Error).message })
+    }
+  }
+
+  const discard = async () => {
+    if (!pending) return
+    await window.api.reviewDelete(reviewTarget)
+    setPending(null)
+  }
+
   const annotations = useMemo(
     () =>
       inlineForFile.map(c => ({
@@ -184,6 +297,19 @@ function PRReviewLoaded({
       })),
     [inlineForFile]
   )
+
+  const repliesByParent = useMemo(() => {
+    const map = new Map<number, LineComment[]>()
+    if (!pending) return map
+    for (const c of pending.lineComments) {
+      if (c.inReplyToId != null) {
+        const list = map.get(c.inReplyToId) ?? []
+        list.push(c)
+        map.set(c.inReplyToId, list)
+      }
+    }
+    return map
+  }, [pending])
 
   return (
     <main style={shellStyle}>
@@ -196,7 +322,16 @@ function PRReviewLoaded({
           <span style={{ color: '#888', marginLeft: '0.5rem' }}>
             · {pr.author} · {pr.headRef} → {pr.baseRef} · +{pr.additions} −{pr.deletions}
           </span>
+          {pending && (
+            <span style={{ marginLeft: '0.5rem', color: '#888' }}>
+              · review in progress ({pending.lineComments.length} comment{pending.lineComments.length === 1 ? '' : 's'})
+            </span>
+          )}
+          {submitState.kind === 'submitted' && (
+            <span style={{ marginLeft: '0.5rem', color: '#2a8b3a' }}>· review submitted</span>
+          )}
         </span>
+        {!pending && <button onClick={startReview}>Start review</button>}
         <StateBadge state={pr.state} />
         <GhAuthIndicator />
       </header>
@@ -226,6 +361,20 @@ function PRReviewLoaded({
             />
           ) : null}
         </section>
+        {pending && (
+          <PRReviewPanel
+            pending={pending}
+            selectedPath={selectedPath}
+            submitState={submitState}
+            onAddComment={() => addComment(selectedPath)}
+            onEditComment={editComment}
+            onRemoveComment={removeComment}
+            onSummary={setSummary}
+            onEvent={setEvent}
+            onSubmit={submit}
+            onDiscard={discard}
+          />
+        )}
         <aside style={conversationPaneStyle}>
           <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Conversation</h3>
           <div style={{ overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -245,19 +394,151 @@ function PRReviewLoaded({
                 Inline on {selectedPath}
               </div>
             )}
-            {inlineForFile.map(c => (
-              <div key={`inline-${c.id}`} style={commentCardStyle}>
-                <div style={{ fontSize: '0.75rem', color: '#888' }}>
-                  {c.author} · line {c.lineNumber} ({c.side === 'LEFT' ? 'old' : 'new'}) ·{' '}
-                  {new Date(c.createdAt).toLocaleString()}
+            {inlineForFile.map(c => {
+              const replies = repliesByParent.get(c.id) ?? []
+              return (
+                <div key={`inline-${c.id}`} style={commentCardStyle}>
+                  <div style={{ fontSize: '0.75rem', color: '#888' }}>
+                    {c.author} · line {c.lineNumber} ({c.side === 'LEFT' ? 'old' : 'new'}) ·{' '}
+                    {new Date(c.createdAt).toLocaleString()}
+                  </div>
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{c.body}</div>
+                  {pending && replies.length === 0 && (
+                    <button onClick={() => addReply(c)} style={{ alignSelf: 'flex-start', fontSize: '0.75rem' }}>
+                      Reply
+                    </button>
+                  )}
+                  {replies.map(reply => (
+                    <div key={reply.id} style={{ ...commentCardStyle, marginLeft: '0.75rem', background: '#f3f8ff' }}>
+                      <div style={{ fontSize: '0.7rem', color: '#666' }}>Your reply (pending)</div>
+                      <textarea
+                        value={reply.body}
+                        onChange={e => editComment(reply.id, { body: e.target.value })}
+                        rows={2}
+                        style={{ width: '100%', fontSize: '0.8rem', resize: 'vertical' }}
+                      />
+                      <button
+                        onClick={() => removeComment(reply.id)}
+                        style={{ alignSelf: 'flex-start', fontSize: '0.7rem' }}
+                      >
+                        Remove reply
+                      </button>
+                    </div>
+                  ))}
                 </div>
-                <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{c.body}</div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </aside>
       </div>
     </main>
+  )
+}
+
+function PRReviewPanel({
+  pending,
+  selectedPath,
+  submitState,
+  onAddComment,
+  onEditComment,
+  onRemoveComment,
+  onSummary,
+  onEvent,
+  onSubmit,
+  onDiscard
+}: {
+  pending: PendingReview
+  selectedPath: string
+  submitState:
+    | { kind: 'idle' }
+    | { kind: 'submitting' }
+    | { kind: 'submitted'; url: string }
+    | { kind: 'error'; message: string }
+  onAddComment: () => void
+  onEditComment: (id: string, patch: Partial<LineComment>) => void
+  onRemoveComment: (id: string) => void
+  onSummary: (s: string) => void
+  onEvent: (e: ReviewEvent) => void
+  onSubmit: () => void
+  onDiscard: () => void
+}) {
+  const fresh = pending.lineComments.filter(c => c.inReplyToId == null)
+  return (
+    <aside style={reviewPaneStyle}>
+      <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Pending PR review</h3>
+
+      <button onClick={onAddComment} style={{ alignSelf: 'flex-start' }}>
+        + Comment on {selectedPath || '(no file selected)'}
+      </button>
+
+      <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        {fresh.length === 0 && (
+          <div style={{ color: '#888', fontSize: '0.85rem' }}>No new comments yet. Use Reply on existing threads or add new comments here.</div>
+        )}
+        {fresh.map(c => (
+          <div key={c.id} style={commentCardStyle}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8rem' }}>
+              <code style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.path}:</code>
+              <input
+                type="number"
+                min={1}
+                value={c.lineNumber}
+                onChange={e => onEditComment(c.id, { lineNumber: Number(e.target.value) })}
+                style={{ width: 60 }}
+              />
+              <select
+                value={c.side}
+                onChange={e => onEditComment(c.id, { side: e.target.value as 'old' | 'new' })}
+              >
+                <option value="new">new</option>
+                <option value="old">old</option>
+              </select>
+              <button onClick={() => onRemoveComment(c.id)}>×</button>
+            </div>
+            <textarea
+              value={c.body}
+              onChange={e => onEditComment(c.id, { body: e.target.value })}
+              rows={3}
+              style={{ width: '100%', fontSize: '0.85rem', resize: 'vertical' }}
+            />
+          </div>
+        ))}
+      </div>
+
+      <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+        <span style={{ fontSize: '0.8rem', color: '#666' }}>Summary</span>
+        <textarea
+          value={pending.summary}
+          onChange={e => onSummary(e.target.value)}
+          rows={4}
+          placeholder="Overall feedback…"
+          style={{ width: '100%', resize: 'vertical', fontSize: '0.85rem' }}
+        />
+      </label>
+
+      <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+        <span style={{ fontSize: '0.8rem', color: '#666' }}>Submit as</span>
+        <select
+          value={pending.event ?? 'COMMENT'}
+          onChange={e => onEvent(e.target.value as ReviewEvent)}
+        >
+          <option value="COMMENT">Comment</option>
+          <option value="APPROVE">Approve</option>
+          <option value="REQUEST_CHANGES">Request changes</option>
+        </select>
+      </label>
+
+      {submitState.kind === 'error' && (
+        <div style={{ color: '#b00020', fontSize: '0.8rem' }}>Failed: {submitState.message}</div>
+      )}
+
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <button onClick={onSubmit} disabled={submitState.kind === 'submitting'} style={{ flex: 1 }}>
+          {submitState.kind === 'submitting' ? 'Submitting…' : 'Submit review'}
+        </button>
+        <button onClick={onDiscard}>Discard</button>
+      </div>
+    </aside>
   )
 }
 
@@ -484,11 +765,12 @@ function ghPillStyle(color: string): React.CSSProperties {
 }
 
 function LoadedView({ repo, files: liveFiles }: { repo: string; files: FileWithPatch[] }) {
+  const target = useMemo(() => localReviewTarget(repo), [repo])
   const [pending, setPending] = useState<PendingReview | null>(null)
 
   useEffect(() => {
-    window.api.reviewGet({ repoPath: repo, sourceSpec: SOURCE_SPEC }).then(setPending)
-  }, [repo])
+    window.api.reviewGet(target).then(setPending)
+  }, [target])
 
   // Snapshot semantics (ADR 0001): when a review is pending, show the snapshot,
   // not the live working tree. The live diff is only used to seed a new review.
@@ -513,8 +795,7 @@ function LoadedView({ repo, files: liveFiles }: { repo: string; files: FileWithP
 
   const startReview = () => {
     const review: PendingReview = {
-      repoPath: repo,
-      sourceSpec: SOURCE_SPEC,
+      target,
       snapshot: { files: liveFiles },
       lineComments: [],
       summary: '',
@@ -589,7 +870,7 @@ function LoadedView({ repo, files: liveFiles }: { repo: string; files: FileWithP
 
   const discardReview = async () => {
     if (!pending) return
-    await window.api.reviewDelete({ repoPath: repo, sourceSpec: SOURCE_SPEC })
+    await window.api.reviewDelete(target)
     setPending(null)
   }
 

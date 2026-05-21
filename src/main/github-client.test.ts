@@ -1,5 +1,14 @@
 import { describe, test, expect } from 'bun:test'
-import { GitHubClient, OctokitLike, SearchResponseItem, PullResponseData, ReviewCommentData, IssueCommentData } from './github-client'
+import {
+  GitHubClient,
+  OctokitLike,
+  SearchResponseItem,
+  PullResponseData,
+  ReviewCommentData,
+  IssueCommentData,
+  CreateReviewParams,
+  CreateReviewResponse
+} from './github-client'
 
 interface MockOptions {
   search?: Record<string, SearchResponseItem[]>
@@ -7,6 +16,8 @@ interface MockOptions {
   pullDiff?: string
   reviewComments?: ReviewCommentData[]
   issueComments?: IssueCommentData[]
+  createReviewResponse?: CreateReviewResponse
+  capturedReviews?: CreateReviewParams[]
 }
 
 function mockOctokit(opts: MockOptions = {}): { octokit: OctokitLike; calls: string[] } {
@@ -30,6 +41,17 @@ function mockOctokit(opts: MockOptions = {}): { octokit: OctokitLike; calls: str
       async listReviewComments(params) {
         calls.push(`pulls.listReviewComments ${params.owner}/${params.repo}#${params.pull_number}`)
         return { data: opts.reviewComments ?? [] }
+      },
+      async createReview(params) {
+        calls.push(`pulls.createReview ${params.owner}/${params.repo}#${params.pull_number} ${params.event}`)
+        opts.capturedReviews?.push(params)
+        return {
+          data: opts.createReviewResponse ?? {
+            id: 1,
+            state: 'submitted',
+            html_url: 'https://github.com/o/r/pull/7#pullrequestreview-1'
+          }
+        }
       }
     },
     issues: {
@@ -249,6 +271,29 @@ describe('GitHubClient.getPRInlineComments', () => {
     const client = new GitHubClient(octokit)
     const comments = await client.getPRInlineComments('o', 'r', 7)
     expect(comments[0].lineNumber).toBe(12)
+  })
+})
+
+describe('GitHubClient.submitReview', () => {
+  test('sends event, body, and comments through Octokit and returns the created review', async () => {
+    const capturedReviews: CreateReviewParams[] = []
+    const { octokit, calls } = mockOctokit({ capturedReviews })
+    const client = new GitHubClient(octokit)
+    const response = await client.submitReview('o', 'r', 7, {
+      body: 'ship it',
+      event: 'APPROVE',
+      comments: [{ path: 'a.ts', line: 5, side: 'RIGHT', body: 'nit' }]
+    })
+    expect(calls).toContain('pulls.createReview o/r#7 APPROVE')
+    expect(capturedReviews[0]).toMatchObject({
+      owner: 'o',
+      repo: 'r',
+      pull_number: 7,
+      body: 'ship it',
+      event: 'APPROVE',
+      comments: [{ path: 'a.ts', line: 5, side: 'RIGHT', body: 'nit' }]
+    })
+    expect(response.state).toBe('submitted')
   })
 })
 

@@ -2,8 +2,8 @@ import { app, clipboard, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { Octokit } from '@octokit/rest'
 import { GitDiffProvider, FileStatus } from './git-diff-provider'
-import { PendingReviewStore, PendingReview, ReviewKey } from './pending-review-store'
-import { toAgentPrompt } from './review-formatter'
+import { PendingReviewStore, PendingReview, ReviewTarget } from './pending-review-store'
+import { toAgentPrompt, toGitHubReview } from './review-formatter'
 import { GhAuthResolver, AuthStatus } from './gh-auth-resolver'
 import { GitHubClient, InboxResult, OctokitLike, PullRequestDetails, InlineComment, ConversationComment } from './github-client'
 
@@ -25,6 +25,7 @@ export const CHANNELS = {
   githubGetPRDiff: 'github:get-pr-diff',
   githubGetPRInlineComments: 'github:get-pr-inline-comments',
   githubGetPRConversation: 'github:get-pr-conversation',
+  reviewSubmitToGithub: 'review:submit-to-github',
   openPRReview: 'window:open-pr-review'
 } as const
 
@@ -98,12 +99,29 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle(CHANNELS.reviewGet, (_e, key: ReviewKey): PendingReview | null => store().get(key))
+  ipcMain.handle(CHANNELS.reviewGet, (_e, target: ReviewTarget): PendingReview | null =>
+    store().get(target)
+  )
   ipcMain.handle(CHANNELS.reviewUpsert, (_e, review: PendingReview): void => store().upsert(review))
-  ipcMain.handle(CHANNELS.reviewDelete, (_e, key: ReviewKey): void => store().delete(key))
+  ipcMain.handle(CHANNELS.reviewDelete, (_e, target: ReviewTarget): void => store().delete(target))
   ipcMain.handle(CHANNELS.reviewSubmitToAgent, (_e, review: PendingReview): void => {
     clipboard.writeText(toAgentPrompt(review))
-    store().delete({ repoPath: review.repoPath, sourceSpec: review.sourceSpec })
+    store().delete(review.target)
+  })
+
+  ipcMain.handle(CHANNELS.reviewSubmitToGithub, async (_e, review: PendingReview): Promise<{ url: string }> => {
+    if (review.target.kind !== 'pr') throw new Error('submitToGithub requires a pr target')
+    const client = await getGithubClient()
+    if (!client) throw new Error('gh CLI is not authenticated')
+    const payload = toGitHubReview(review)
+    const result = await client.submitReview(
+      review.target.owner,
+      review.target.repo,
+      review.target.number,
+      payload
+    )
+    store().delete(review.target)
+    return { url: result.html_url }
   })
 
   ipcMain.handle(CHANNELS.ghAuthStatus, async (): Promise<AuthStatus> => ghAuth.status())
