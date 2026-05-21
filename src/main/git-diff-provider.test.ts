@@ -55,6 +55,78 @@ describe('GitDiffProvider — working tree vs HEAD', () => {
     expect(patch).toContain('+fresh content')
   })
 
+  test('staged-vs-head shows files added to the index', async () => {
+    writeFileSync(join(repo, 'staged.txt'), 'staged-content\n')
+    git(repo, 'add staged.txt')
+    // Also modify a file but DON'T stage that change.
+    writeFileSync(join(repo, 'README.md'), 'hello\nadded after staging\n')
+
+    const diff = await provider.getDiff(repo, { type: 'staged-vs-head' })
+    const paths = diff.files.map(f => f.path).sort()
+    expect(paths).toEqual(['staged.txt'])
+    expect(diff.files[0].status).toBe('added')
+  })
+
+  test('working-tree-vs-staged shows the unstaged delta only', async () => {
+    writeFileSync(join(repo, 'shared.txt'), 'first\n')
+    git(repo, 'add shared.txt')
+    git(repo, 'commit -q -m base')
+    writeFileSync(join(repo, 'shared.txt'), 'first\nstaged\n')
+    git(repo, 'add shared.txt')
+    writeFileSync(join(repo, 'shared.txt'), 'first\nstaged\nunstaged\n')
+
+    const diff = await provider.getDiff(repo, { type: 'working-tree-vs-staged' })
+    const file = diff.files.find(f => f.path === 'shared.txt')!
+    expect(file.status).toBe('modified')
+    const adds = file.hunks.flatMap(h => h.lines.filter(l => l.type === 'add').map(l => l.content))
+    expect(adds).toContain('unstaged')
+    expect(adds).not.toContain('staged')
+  })
+
+  test('branch-vs-base shows commits unique to head', async () => {
+    git(repo, 'checkout -q -b feat')
+    writeFileSync(join(repo, 'feat.txt'), 'on-branch\n')
+    git(repo, 'add feat.txt')
+    git(repo, 'commit -q -m feat')
+
+    const diff = await provider.getDiff(repo, {
+      type: 'branch-vs-base',
+      base: 'main',
+      head: 'feat'
+    })
+    expect(diff.files.map(f => f.path)).toEqual(['feat.txt'])
+    expect(diff.files[0].status).toBe('added')
+  })
+
+  test('commit-range shows the diff between two commits', async () => {
+    writeFileSync(join(repo, 'evolves.txt'), 'v1\n')
+    git(repo, 'add evolves.txt')
+    git(repo, 'commit -q -m v1')
+    const v1 = git(repo, 'rev-parse HEAD')
+    writeFileSync(join(repo, 'evolves.txt'), 'v2\n')
+    git(repo, 'add evolves.txt')
+    git(repo, 'commit -q -m v2')
+    const v2 = git(repo, 'rev-parse HEAD')
+
+    const diff = await provider.getDiff(repo, { type: 'commit-range', from: v1, to: v2 })
+    const file = diff.files.find(f => f.path === 'evolves.txt')!
+    const adds = file.hunks.flatMap(h => h.lines.filter(l => l.type === 'add').map(l => l.content))
+    const removes = file.hunks.flatMap(h => h.lines.filter(l => l.type === 'delete').map(l => l.content))
+    expect(adds).toEqual(['v2'])
+    expect(removes).toEqual(['v1'])
+  })
+
+  test('single-commit shows the changes introduced by that commit', async () => {
+    writeFileSync(join(repo, 'single.txt'), 'init\n')
+    git(repo, 'add single.txt')
+    git(repo, 'commit -q -m add-single')
+    const sha = git(repo, 'rev-parse HEAD')
+
+    const diff = await provider.getDiff(repo, { type: 'single-commit', sha })
+    expect(diff.files.map(f => f.path)).toEqual(['single.txt'])
+    expect(diff.files[0].status).toBe('added')
+  })
+
   test('binary file is flagged with isBinary and no hunks', async () => {
     const binary = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x00, 0x00, 0x00])
     writeFileSync(join(repo, 'image.bin'), binary)

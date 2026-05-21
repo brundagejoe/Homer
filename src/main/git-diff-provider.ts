@@ -5,7 +5,13 @@ import { promisify } from 'node:util'
 
 const exec = promisify(execFile)
 
-export type DiffSourceSpec = { type: 'working-tree-vs-head' }
+export type DiffSourceSpec =
+  | { type: 'working-tree-vs-head' }
+  | { type: 'staged-vs-head' }
+  | { type: 'working-tree-vs-staged' }
+  | { type: 'branch-vs-base'; head: string; base: string }
+  | { type: 'commit-range'; from: string; to: string }
+  | { type: 'single-commit'; sha: string }
 
 export type FileStatus = 'added' | 'modified' | 'deleted' | 'renamed'
 
@@ -207,20 +213,46 @@ async function loadUntracked(repoPath: string, path: string): Promise<FileDiff> 
   }
 }
 
+interface DiffArgs {
+  args: string[]
+  includeUntracked: boolean
+}
+
+function gitArgsFor(source: DiffSourceSpec, includeNameStatus: boolean): DiffArgs {
+  const base = includeNameStatus
+    ? ['diff', '--name-status', '-M', '--no-color']
+    : ['diff', '-M', '--no-color']
+  switch (source.type) {
+    case 'working-tree-vs-head':
+      return { args: [...base, 'HEAD'], includeUntracked: true }
+    case 'staged-vs-head':
+      return { args: [...base, '--cached', 'HEAD'], includeUntracked: false }
+    case 'working-tree-vs-staged':
+      return { args: [...base], includeUntracked: true }
+    case 'branch-vs-base':
+      return { args: [...base, `${source.base}...${source.head}`], includeUntracked: false }
+    case 'commit-range':
+      return { args: [...base, `${source.from}..${source.to}`], includeUntracked: false }
+    case 'single-commit': {
+      const showBase = includeNameStatus ? ['show', '--name-status', '-M'] : ['show', '-M']
+      return { args: [...showBase, '--format=', '--no-color', source.sha], includeUntracked: false }
+    }
+  }
+}
+
 export class GitDiffProvider {
   async getRawPatch(repoPath: string, source: DiffSourceSpec): Promise<string> {
-    if (source.type !== 'working-tree-vs-head') {
-      throw new Error(`Unsupported diff source: ${source.type}`)
+    const { args, includeUntracked } = gitArgsFor(source, false)
+    const calls: Promise<string>[] = [git(repoPath, args)]
+    if (includeUntracked) {
+      calls.push(git(repoPath, ['ls-files', '--others', '--exclude-standard']))
     }
+    const results = await Promise.all(calls)
+    const tracked = results[0]
+    const untrackedList = includeUntracked ? results[1] : ''
 
-    const [tracked, untrackedList] = await Promise.all([
-      git(repoPath, ['diff', '-M', '--no-color', 'HEAD']),
-      git(repoPath, ['ls-files', '--others', '--exclude-standard'])
-    ])
-
-    const untracked = untrackedList.split('\n').filter(Boolean)
     const untrackedPatches: string[] = []
-    for (const path of untracked) {
+    for (const path of untrackedList.split('\n').filter(Boolean)) {
       const patch = await diffAgainstNothing(repoPath, path)
       if (patch) untrackedPatches.push(patch)
     }
@@ -229,15 +261,17 @@ export class GitDiffProvider {
   }
 
   async getDiff(repoPath: string, source: DiffSourceSpec): Promise<DiffData> {
-    if (source.type !== 'working-tree-vs-head') {
-      throw new Error(`Unsupported diff source: ${source.type}`)
-    }
+    const ns = gitArgsFor(source, true)
+    const patchArgs = gitArgsFor(source, false)
 
-    const [nameStatus, patch, untrackedList] = await Promise.all([
-      git(repoPath, ['diff', '--name-status', '-M', '--no-color', 'HEAD']),
-      git(repoPath, ['diff', '-M', '--no-color', 'HEAD']),
-      git(repoPath, ['ls-files', '--others', '--exclude-standard'])
-    ])
+    const calls: Promise<string>[] = [git(repoPath, ns.args), git(repoPath, patchArgs.args)]
+    if (ns.includeUntracked) {
+      calls.push(git(repoPath, ['ls-files', '--others', '--exclude-standard']))
+    }
+    const results = await Promise.all(calls)
+    const nameStatus = results[0]
+    const patch = results[1]
+    const untrackedList = ns.includeUntracked ? results[2] : ''
 
     const headers = parseFileHeaders(nameStatus)
     const patches = parseHunks(patch)
@@ -248,8 +282,7 @@ export class GitDiffProvider {
       files.push({ path, oldPath, status, isBinary: entry.isBinary, hunks: entry.hunks })
     }
 
-    const untracked = untrackedList.split('\n').filter(Boolean)
-    for (const path of untracked) {
+    for (const path of untrackedList.split('\n').filter(Boolean)) {
       files.push(await loadUntracked(repoPath, path))
     }
 

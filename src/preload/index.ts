@@ -36,8 +36,16 @@ export interface LocalDiffResult {
   files: FileWithPatch[]
 }
 
+export type DiffSourceSpec =
+  | { type: 'working-tree-vs-head' }
+  | { type: 'staged-vs-head' }
+  | { type: 'working-tree-vs-staged' }
+  | { type: 'branch-vs-base'; head: string; base: string }
+  | { type: 'commit-range'; from: string; to: string }
+  | { type: 'single-commit'; sha: string }
+
 export type ReviewTarget =
-  | { kind: 'local'; repoPath: string; source: { type: 'working-tree-vs-head' } }
+  | { kind: 'local'; repoPath: string; source: DiffSourceSpec }
   | { kind: 'pr'; owner: string; repo: string; number: number }
 
 export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
@@ -136,7 +144,8 @@ const api = {
   repoPath,
   purpose,
   prTarget,
-  getLocalDiff: (path: string): Promise<LocalDiffResult> => ipcRenderer.invoke('git:local-diff', path),
+  getLocalDiff: (repoPath: string, source?: DiffSourceSpec): Promise<LocalDiffResult> =>
+    ipcRenderer.invoke('git:local-diff', { repoPath, source }),
   reviewGet: (target: ReviewTarget): Promise<PendingReview | null> =>
     ipcRenderer.invoke('review:get', target),
   reviewUpsert: (review: PendingReview): Promise<void> => ipcRenderer.invoke('review:upsert', review),

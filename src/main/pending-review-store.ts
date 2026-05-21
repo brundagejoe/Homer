@@ -2,8 +2,10 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { FileWithPatch } from './ipc'
 
+import type { DiffSourceSpec } from './git-diff-provider'
+
 export type ReviewTarget =
-  | { kind: 'local'; repoPath: string; source: { type: 'working-tree-vs-head' } }
+  | { kind: 'local'; repoPath: string; source: DiffSourceSpec }
   | { kind: 'pr'; owner: string; repo: string; number: number }
 
 export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
@@ -33,8 +35,23 @@ export interface PendingReview {
   updatedAt: number
 }
 
+function sourceKey(source: DiffSourceSpec): string {
+  switch (source.type) {
+    case 'working-tree-vs-head':
+    case 'staged-vs-head':
+    case 'working-tree-vs-staged':
+      return source.type
+    case 'branch-vs-base':
+      return `branch-vs-base:${source.base}...${source.head}`
+    case 'commit-range':
+      return `commit-range:${source.from}..${source.to}`
+    case 'single-commit':
+      return `single-commit:${source.sha}`
+  }
+}
+
 export function keyForTarget(target: ReviewTarget): string {
-  if (target.kind === 'local') return `local::${target.repoPath}::${target.source.type}`
+  if (target.kind === 'local') return `local::${target.repoPath}::${sourceKey(target.source)}`
   return `pr::${target.owner}/${target.repo}#${target.number}`
 }
 

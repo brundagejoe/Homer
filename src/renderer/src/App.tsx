@@ -4,6 +4,7 @@ import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react
 import type {
   AuthStatus,
   ConversationComment,
+  DiffSourceSpec,
   FileWithPatch,
   InboxResult,
   InlineComment,
@@ -22,8 +23,10 @@ type Status =
   | { type: 'loaded'; repo: string; files: FileWithPatch[] }
   | { type: 'error'; message: string }
 
-function localReviewTarget(repoPath: string): ReviewTarget {
-  return { kind: 'local', repoPath, source: { type: 'working-tree-vs-head' } }
+const DEFAULT_SOURCE: DiffSourceSpec = { type: 'working-tree-vs-head' }
+
+function localReviewTarget(repoPath: string, source: DiffSourceSpec): ReviewTarget {
+  return { kind: 'local', repoPath, source }
 }
 
 export default function App() {
@@ -49,37 +52,134 @@ function FatalError({ msg }: { msg: string }) {
 }
 
 function LocalRoot() {
+  const repo = window.api.repoPath
+  const [source, setSource] = useState<DiffSourceSpec>(DEFAULT_SOURCE)
   const [status, setStatus] = useState<Status>({ type: 'loading' })
 
   useEffect(() => {
-    const repo = window.api.repoPath
+    let cancelled = false
+    setStatus({ type: 'loading' })
     window.api
-      .getLocalDiff(repo)
+      .getLocalDiff(repo, source)
       .then(({ files }) => {
+        if (cancelled) return
         if (files.length === 0) setStatus({ type: 'empty', repo })
         else setStatus({ type: 'loaded', repo, files })
       })
-      .catch((err: Error) =>
-        setStatus({ type: 'error', message: err.message ?? String(err) })
-      )
-  }, [])
+      .catch((err: Error) => {
+        if (!cancelled) setStatus({ type: 'error', message: err.message ?? String(err) })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [repo, sourceKey(source)])
+
+  const sourcePicker = <SourcePicker value={source} onChange={setSource} />
 
   if (status.type !== 'loaded') {
     return (
       <main style={shellStyle}>
-        <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between' }}>
-          <span>
+        <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+          <span style={{ flex: 1 }}>
             {status.type === 'loading' && 'Loading…'}
-            {status.type === 'empty' && `${status.repo} — clean working tree`}
+            {status.type === 'empty' && `${status.repo} — no changes for this source`}
             {status.type === 'error' && `Error: ${status.message}`}
           </span>
+          {sourcePicker}
           <GhAuthIndicator />
         </header>
       </main>
     )
   }
 
-  return <LoadedView repo={status.repo} files={status.files} />
+  return <LoadedView repo={status.repo} files={status.files} source={source} sourcePicker={sourcePicker} />
+}
+
+function sourceKey(source: DiffSourceSpec): string {
+  switch (source.type) {
+    case 'working-tree-vs-head':
+    case 'staged-vs-head':
+    case 'working-tree-vs-staged':
+      return source.type
+    case 'branch-vs-base':
+      return `branch-vs-base:${source.base}...${source.head}`
+    case 'commit-range':
+      return `commit-range:${source.from}..${source.to}`
+    case 'single-commit':
+      return `single-commit:${source.sha}`
+  }
+}
+
+function SourcePicker({ value, onChange }: { value: DiffSourceSpec; onChange: (s: DiffSourceSpec) => void }) {
+  return (
+    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: '0.8rem' }}>
+      <select
+        value={value.type}
+        onChange={e => {
+          const t = e.target.value as DiffSourceSpec['type']
+          if (t === 'working-tree-vs-head' || t === 'staged-vs-head' || t === 'working-tree-vs-staged') {
+            onChange({ type: t })
+          } else if (t === 'branch-vs-base') {
+            onChange({ type: 'branch-vs-base', head: 'HEAD', base: 'main' })
+          } else if (t === 'commit-range') {
+            onChange({ type: 'commit-range', from: 'HEAD~1', to: 'HEAD' })
+          } else if (t === 'single-commit') {
+            onChange({ type: 'single-commit', sha: 'HEAD' })
+          }
+        }}
+        style={{ fontSize: '0.8rem' }}
+      >
+        <option value="working-tree-vs-head">Working tree vs HEAD</option>
+        <option value="staged-vs-head">Staged vs HEAD</option>
+        <option value="working-tree-vs-staged">Working tree vs staged</option>
+        <option value="branch-vs-base">Branch vs base</option>
+        <option value="commit-range">Commit range</option>
+        <option value="single-commit">Single commit</option>
+      </select>
+      {value.type === 'branch-vs-base' && (
+        <>
+          <input
+            value={value.head}
+            onChange={e => onChange({ ...value, head: e.target.value })}
+            placeholder="head"
+            style={{ width: 100, fontSize: '0.75rem' }}
+          />
+          <span style={{ color: '#888' }}>vs</span>
+          <input
+            value={value.base}
+            onChange={e => onChange({ ...value, base: e.target.value })}
+            placeholder="base"
+            style={{ width: 100, fontSize: '0.75rem' }}
+          />
+        </>
+      )}
+      {value.type === 'commit-range' && (
+        <>
+          <input
+            value={value.from}
+            onChange={e => onChange({ ...value, from: e.target.value })}
+            placeholder="from"
+            style={{ width: 90, fontSize: '0.75rem' }}
+          />
+          <span style={{ color: '#888' }}>..</span>
+          <input
+            value={value.to}
+            onChange={e => onChange({ ...value, to: e.target.value })}
+            placeholder="to"
+            style={{ width: 90, fontSize: '0.75rem' }}
+          />
+        </>
+      )}
+      {value.type === 'single-commit' && (
+        <input
+          value={value.sha}
+          onChange={e => onChange({ ...value, sha: e.target.value })}
+          placeholder="sha or ref"
+          style={{ width: 140, fontSize: '0.75rem' }}
+        />
+      )}
+    </div>
+  )
 }
 
 type PRStatus =
@@ -797,8 +897,18 @@ function ghPillStyle(color: string): React.CSSProperties {
   }
 }
 
-function LoadedView({ repo, files: liveFiles }: { repo: string; files: FileWithPatch[] }) {
-  const target = useMemo(() => localReviewTarget(repo), [repo])
+function LoadedView({
+  repo,
+  files: liveFiles,
+  source,
+  sourcePicker
+}: {
+  repo: string
+  files: FileWithPatch[]
+  source: DiffSourceSpec
+  sourcePicker: React.ReactNode
+}) {
+  const target = useMemo(() => localReviewTarget(repo, source), [repo, sourceKey(source)])
   const [pending, setPending] = useState<PendingReview | null>(null)
 
   useEffect(() => {
@@ -911,7 +1021,7 @@ function LoadedView({ repo, files: liveFiles }: { repo: string; files: FileWithP
     <main style={shellStyle}>
       <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
         <span style={{ flex: 1 }}>
-          {repo} — working tree vs HEAD ({files.length} file{files.length === 1 ? '' : 's'})
+          {repo} ({files.length} file{files.length === 1 ? '' : 's'})
           {pending && (
             <span style={{ marginLeft: '0.75rem', color: '#888' }}>
               · review in progress ({pending.lineComments.length} comment
@@ -919,6 +1029,7 @@ function LoadedView({ repo, files: liveFiles }: { repo: string; files: FileWithP
             </span>
           )}
         </span>
+        {sourcePicker}
         {!pending && <button onClick={startReview}>Start review</button>}
         <GhAuthIndicator />
       </header>

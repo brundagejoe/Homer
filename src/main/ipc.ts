@@ -1,7 +1,7 @@
 import { app, clipboard, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { Octokit } from '@octokit/rest'
-import { GitDiffProvider, FileStatus } from './git-diff-provider'
+import { GitDiffProvider, FileStatus, DiffSourceSpec } from './git-diff-provider'
 import { PendingReviewStore, PendingReview, ReviewTarget } from './pending-review-store'
 import { toAgentPrompt, toGitHubReview } from './review-formatter'
 import { GhAuthResolver, AuthStatus } from './gh-auth-resolver'
@@ -81,23 +81,26 @@ export function splitPatchByFile(rawPatch: string): Map<string, string> {
 }
 
 export function registerIpcHandlers(): void {
-  ipcMain.handle(CHANNELS.getLocalDiff, async (_e, repoPath: string): Promise<LocalDiffResult> => {
-    const source = { type: 'working-tree-vs-head' as const }
-    const [data, rawPatch] = await Promise.all([
-      provider.getDiff(repoPath, source),
-      provider.getRawPatch(repoPath, source)
-    ])
-    const patches = splitPatchByFile(rawPatch)
-    return {
-      files: data.files.map(f => ({
-        path: f.path,
-        oldPath: f.oldPath,
-        status: f.status,
-        isBinary: f.isBinary,
-        patch: patches.get(f.path) ?? ''
-      }))
+  ipcMain.handle(
+    CHANNELS.getLocalDiff,
+    async (_e, args: { repoPath: string; source?: DiffSourceSpec }): Promise<LocalDiffResult> => {
+      const source = args.source ?? { type: 'working-tree-vs-head' as const }
+      const [data, rawPatch] = await Promise.all([
+        provider.getDiff(args.repoPath, source),
+        provider.getRawPatch(args.repoPath, source)
+      ])
+      const patches = splitPatchByFile(rawPatch)
+      return {
+        files: data.files.map(f => ({
+          path: f.path,
+          oldPath: f.oldPath,
+          status: f.status,
+          isBinary: f.isBinary,
+          patch: patches.get(f.path) ?? ''
+        }))
+      }
     }
-  })
+  )
 
   ipcMain.handle(CHANNELS.reviewGet, (_e, target: ReviewTarget): PendingReview | null =>
     store().get(target)
