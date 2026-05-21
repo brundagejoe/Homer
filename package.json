@@ -17,6 +17,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
+    "@octokit/rest": "^22.0.1",
     "@pierre/diffs": "^1.2.1",
     "@pierre/trees": "^1.0.0-beta.4"
   },

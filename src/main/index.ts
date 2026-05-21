@@ -4,41 +4,71 @@ import { join, resolve } from 'node:path'
 import { registerIpcHandlers } from './ipc'
 
 const REPO_FLAG = '--repo-path='
+const PURPOSE_FLAG = '--purpose='
 
-function resolveRepoPathFromArgv(argv: string[]): string {
-  const flag = argv.find(a => a.startsWith(REPO_FLAG))
-  if (flag) return flag.slice(REPO_FLAG.length)
+type LaunchTarget =
+  | { kind: 'inbox' }
+  | { kind: 'local'; repoPath: string }
+
+function resolveLaunchTarget(argv: string[]): LaunchTarget {
+  const explicit = argv.find(a => a.startsWith(REPO_FLAG))
+  if (explicit) return { kind: 'local', repoPath: explicit.slice(REPO_FLAG.length) }
   const positional = argv.slice(2).find(a => !a.startsWith('-') && !a.includes('app.asar'))
-  return positional ? resolve(positional) : process.cwd()
+  if (positional) return { kind: 'local', repoPath: resolve(positional) }
+  return { kind: 'inbox' }
 }
 
-const windowsByRepo = new Map<string, BrowserWindow>()
+let inboxWindow: BrowserWindow | null = null
+const localWindows = new Map<string, BrowserWindow>()
 
-function createWindow(repoPath: string): void {
-  const existing = windowsByRepo.get(repoPath)
-  if (existing && !existing.isDestroyed()) {
-    if (existing.isMinimized()) existing.restore()
-    existing.focus()
-    return
+function openWindow(target: LaunchTarget): void {
+  if (target.kind === 'inbox') {
+    if (inboxWindow && !inboxWindow.isDestroyed()) {
+      if (inboxWindow.isMinimized()) inboxWindow.restore()
+      inboxWindow.focus()
+      return
+    }
+  } else {
+    const existing = localWindows.get(target.repoPath)
+    if (existing && !existing.isDestroyed()) {
+      if (existing.isMinimized()) existing.restore()
+      existing.focus()
+      return
+    }
   }
+
+  const additionalArguments =
+    target.kind === 'inbox'
+      ? [`${PURPOSE_FLAG}inbox`]
+      : [`${PURPOSE_FLAG}local`, `${REPO_FLAG}${target.repoPath}`]
+
+  const title =
+    target.kind === 'inbox' ? 'Diff Viewer — Inbox' : `Diff Viewer — ${target.repoPath}`
 
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
     show: false,
     autoHideMenuBar: true,
-    title: `Diff Viewer — ${repoPath}`,
+    title,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
-      additionalArguments: [`${REPO_FLAG}${repoPath}`]
+      additionalArguments
     }
   })
 
-  windowsByRepo.set(repoPath, win)
-  win.on('closed', () => {
-    if (windowsByRepo.get(repoPath) === win) windowsByRepo.delete(repoPath)
-  })
+  if (target.kind === 'inbox') {
+    inboxWindow = win
+    win.on('closed', () => {
+      if (inboxWindow === win) inboxWindow = null
+    })
+  } else {
+    localWindows.set(target.repoPath, win)
+    win.on('closed', () => {
+      if (localWindows.get(target.repoPath) === win) localWindows.delete(target.repoPath)
+    })
+  }
 
   win.on('ready-to-show', () => win.show())
   win.webContents.setWindowOpenHandler(details => {
@@ -57,7 +87,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', (_event, argv) => {
-    createWindow(resolveRepoPathFromArgv(argv))
+    openWindow(resolveLaunchTarget(argv))
   })
 
   app.whenReady().then(() => {
@@ -67,11 +97,11 @@ if (!app.requestSingleInstanceLock()) {
     })
 
     registerIpcHandlers()
-    createWindow(resolveRepoPathFromArgv(process.argv))
+    openWindow(resolveLaunchTarget(process.argv))
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow(resolveRepoPathFromArgv(process.argv))
+        openWindow(resolveLaunchTarget(process.argv))
       }
     })
   })
@@ -80,3 +110,4 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit()
   })
 }
+

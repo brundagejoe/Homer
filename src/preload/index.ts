@@ -2,8 +2,12 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 const REPO_PATH_FLAG = '--repo-path='
+const PURPOSE_FLAG = '--purpose='
+
 const repoPathArg = process.argv.find(a => a.startsWith(REPO_PATH_FLAG))
 const repoPath = repoPathArg ? repoPathArg.slice(REPO_PATH_FLAG.length) : process.cwd()
+const purposeArg = process.argv.find(a => a.startsWith(PURPOSE_FLAG))
+const purpose: 'inbox' | 'local' = purposeArg === '--purpose=inbox' ? 'inbox' : 'local'
 
 export type FileStatus = 'added' | 'modified' | 'deleted' | 'renamed'
 
@@ -56,15 +60,37 @@ export type AuthStatus =
   | { kind: 'gh-not-installed' }
   | { kind: 'error'; message: string }
 
+export interface PullRequestSummary {
+  id: number
+  number: number
+  title: string
+  repo: string
+  author: string
+  state: 'open' | 'draft' | 'merged' | 'closed'
+  url: string
+  updatedAt: string
+  commentCount: number
+}
+
+export interface InboxResult {
+  mine: PullRequestSummary[]
+  reviewRequested: PullRequestSummary[]
+  recentlyMerged: PullRequestSummary[]
+}
+
 const api = {
   repoPath,
+  purpose,
   getLocalDiff: (path: string): Promise<LocalDiffResult> => ipcRenderer.invoke('git:local-diff', path),
   reviewGet: (key: ReviewKey): Promise<PendingReview | null> => ipcRenderer.invoke('review:get', key),
   reviewUpsert: (review: PendingReview): Promise<void> => ipcRenderer.invoke('review:upsert', review),
   reviewDelete: (key: ReviewKey): Promise<void> => ipcRenderer.invoke('review:delete', key),
   reviewSubmitToAgent: (review: PendingReview): Promise<void> =>
     ipcRenderer.invoke('review:submit-to-agent', review),
-  ghAuthStatus: (): Promise<AuthStatus> => ipcRenderer.invoke('gh:auth-status')
+  ghAuthStatus: (): Promise<AuthStatus> => ipcRenderer.invoke('gh:auth-status'),
+  githubListPRs: (): Promise<InboxResult> => ipcRenderer.invoke('github:list-prs'),
+  openPRReview: (args: { owner: string; repo: string; number: number }): Promise<void> =>
+    ipcRenderer.invoke('window:open-pr-review', args)
 }
 
 export type DiffViewerApi = typeof api

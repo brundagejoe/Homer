@@ -1,9 +1,11 @@
 import { app, clipboard, ipcMain } from 'electron'
 import { join } from 'node:path'
+import { Octokit } from '@octokit/rest'
 import { GitDiffProvider, FileStatus } from './git-diff-provider'
 import { PendingReviewStore, PendingReview, ReviewKey } from './pending-review-store'
 import { toAgentPrompt } from './review-formatter'
 import { GhAuthResolver, AuthStatus } from './gh-auth-resolver'
+import { GitHubClient, InboxResult, OctokitLike } from './github-client'
 
 export const CHANNELS = {
   getLocalDiff: 'git:local-diff',
@@ -11,7 +13,9 @@ export const CHANNELS = {
   reviewUpsert: 'review:upsert',
   reviewDelete: 'review:delete',
   reviewSubmitToAgent: 'review:submit-to-agent',
-  ghAuthStatus: 'gh:auth-status'
+  ghAuthStatus: 'gh:auth-status',
+  githubListPRs: 'github:list-prs',
+  openPRReview: 'window:open-pr-review'
 } as const
 
 export interface FileWithPatch {
@@ -29,6 +33,15 @@ export interface LocalDiffResult {
 const provider = new GitDiffProvider()
 const ghAuth = new GhAuthResolver()
 let storeInstance: PendingReviewStore | null = null
+let githubClient: GitHubClient | null = null
+
+async function getGithubClient(): Promise<GitHubClient | null> {
+  if (githubClient) return githubClient
+  const token = await ghAuth.token()
+  if (!token) return null
+  githubClient = new GitHubClient(new Octokit({ auth: token }) as unknown as OctokitLike)
+  return githubClient
+}
 
 function store(): PendingReviewStore {
   if (!storeInstance) {
@@ -84,4 +97,18 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(CHANNELS.ghAuthStatus, async (): Promise<AuthStatus> => ghAuth.status())
+
+  ipcMain.handle(CHANNELS.githubListPRs, async (): Promise<InboxResult> => {
+    const client = await getGithubClient()
+    if (!client) throw new Error('gh CLI is not authenticated')
+    return client.listInvolvingPRs()
+  })
+
+  // Stub: lands in slice 7 (PR Review window). For now logs so we can verify the click wiring.
+  ipcMain.handle(
+    CHANNELS.openPRReview,
+    (_e, args: { owner: string; repo: string; number: number }) => {
+      console.log('TODO open PR review window for', args)
+    }
+  )
 }

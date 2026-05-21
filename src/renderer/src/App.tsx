@@ -4,7 +4,9 @@ import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react
 import type {
   AuthStatus,
   FileWithPatch,
+  InboxResult,
   PendingReview,
+  PullRequestSummary,
   LineComment,
   DiffSourceSpec
 } from '../../preload'
@@ -18,13 +20,16 @@ type Status =
 const SOURCE_SPEC: DiffSourceSpec = { type: 'working-tree-vs-head' }
 
 export default function App() {
+  if (!window.api) {
+    return <main style={shellStyle}><header style={statusBarStyle}>window.api is undefined</header></main>
+  }
+  return window.api.purpose === 'inbox' ? <InboxView /> : <LocalRoot />
+}
+
+function LocalRoot() {
   const [status, setStatus] = useState<Status>({ type: 'loading' })
 
   useEffect(() => {
-    if (!window.api) {
-      setStatus({ type: 'error', message: 'window.api is undefined' })
-      return
-    }
     const repo = window.api.repoPath
     window.api
       .getLocalDiff(repo)
@@ -53,6 +58,153 @@ export default function App() {
   }
 
   return <LoadedView repo={status.repo} files={status.files} />
+}
+
+type InboxStatus =
+  | { type: 'loading' }
+  | { type: 'loaded'; result: InboxResult }
+  | { type: 'error'; message: string }
+
+function InboxView() {
+  const [status, setStatus] = useState<InboxStatus>({ type: 'loading' })
+  const [lastFetched, setLastFetched] = useState<number | null>(null)
+
+  const load = () => {
+    window.api
+      .githubListPRs()
+      .then(result => {
+        setStatus({ type: 'loaded', result })
+        setLastFetched(Date.now())
+      })
+      .catch((err: Error) => setStatus({ type: 'error', message: err.message ?? String(err) }))
+  }
+
+  useEffect(() => {
+    load()
+    const onFocus = () => load()
+    window.addEventListener('focus', onFocus)
+    let timer: number | null = null
+    const startPoll = () => {
+      timer = window.setInterval(() => {
+        if (document.hasFocus()) load()
+      }, 60_000)
+    }
+    startPoll()
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      if (timer !== null) window.clearInterval(timer)
+    }
+  }, [])
+
+  return (
+    <main style={shellStyle}>
+      <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+        <span style={{ flex: 1 }}>
+          PR Inbox
+          {lastFetched && (
+            <span style={{ marginLeft: '0.75rem', color: '#888' }}>
+              · updated {new Date(lastFetched).toLocaleTimeString()}
+            </span>
+          )}
+        </span>
+        <button onClick={load}>Refresh</button>
+        <GhAuthIndicator />
+      </header>
+      <section style={{ flex: 1, overflow: 'auto', padding: '0.75rem 1rem' }}>
+        {status.type === 'loading' && <div style={{ color: '#888' }}>Loading…</div>}
+        {status.type === 'error' && (
+          <div style={{ color: '#b00020' }}>Failed to load: {status.message}</div>
+        )}
+        {status.type === 'loaded' && (
+          <>
+            <InboxSection title="Mine" prs={status.result.mine} />
+            <InboxSection title="Review requested" prs={status.result.reviewRequested} />
+            <InboxSection title="Recently merged" prs={status.result.recentlyMerged} />
+          </>
+        )}
+      </section>
+    </main>
+  )
+}
+
+function InboxSection({ title, prs }: { title: string; prs: PullRequestSummary[] }) {
+  return (
+    <div style={{ marginBottom: '1.5rem' }}>
+      <h3 style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: '#666', margin: '0 0 0.5rem' }}>
+        {title} <span style={{ color: '#aaa' }}>({prs.length})</span>
+      </h3>
+      {prs.length === 0 ? (
+        <div style={{ color: '#888', fontSize: '0.85rem' }}>None.</div>
+      ) : (
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+          {prs.map(pr => (
+            <li key={pr.id}>
+              <PrRow pr={pr} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function PrRow({ pr }: { pr: PullRequestSummary }) {
+  const onClick = () => {
+    const [owner, repo] = pr.repo.split('/')
+    window.api.openPRReview({ owner, repo, number: pr.number })
+  }
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        textAlign: 'left',
+        width: '100%',
+        padding: '0.5rem 0.6rem',
+        border: '1px solid #eee',
+        borderRadius: 4,
+        background: '#fff',
+        cursor: 'pointer',
+        display: 'grid',
+        gridTemplateColumns: '1fr auto',
+        gap: '0.5rem',
+        fontSize: '0.85rem'
+      }}
+    >
+      <span>
+        <span style={{ fontWeight: 600 }}>{pr.title}</span>
+        <span style={{ color: '#888', marginLeft: '0.5rem' }}>
+          {pr.repo} #{pr.number} · {pr.author}
+        </span>
+      </span>
+      <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <StateBadge state={pr.state} />
+        {pr.commentCount > 0 && <span style={{ color: '#888' }}>💬 {pr.commentCount}</span>}
+      </span>
+    </button>
+  )
+}
+
+function StateBadge({ state }: { state: PullRequestSummary['state'] }) {
+  const colors: Record<PullRequestSummary['state'], string> = {
+    open: '#2a8b3a',
+    draft: '#666',
+    merged: '#6f42c1',
+    closed: '#b00020'
+  }
+  return (
+    <span
+      style={{
+        fontSize: '0.7rem',
+        textTransform: 'uppercase',
+        color: colors[state],
+        border: `1px solid ${colors[state]}`,
+        padding: '0.05rem 0.4rem',
+        borderRadius: 999
+      }}
+    >
+      {state}
+    </span>
+  )
 }
 
 function GhAuthIndicator() {
