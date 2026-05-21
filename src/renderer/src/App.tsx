@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { PatchDiff } from '@pierre/diffs/react'
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react'
+import { useKeyboardShortcut } from './useKeyboardShortcut'
+import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
 import type {
   AuthStatus,
   ConversationComment,
@@ -30,18 +32,49 @@ function localReviewTarget(repoPath: string, source: DiffSourceSpec): ReviewTarg
 }
 
 export default function App() {
+  const [helpOpen, setHelpOpen] = useState(false)
+
+  useKeyboardShortcut({
+    key: '?',
+    handler: () => setHelpOpen(o => !o)
+  })
+
+  useEffect(() => {
+    const onShow = () => setHelpOpen(true)
+    window.addEventListener(HELP_EVENT, onShow)
+    return () => window.removeEventListener(HELP_EVENT, onShow)
+  }, [])
+
   if (!window.api) {
     return <main style={shellStyle}><header style={statusBarStyle}>window.api is undefined</header></main>
   }
-  switch (window.api.purpose) {
-    case 'inbox':
-      return <InboxView />
-    case 'pr-review':
-      return window.api.prTarget ? <PRReviewView target={window.api.prTarget} /> : <FatalError msg="PR target missing from launch args" />
-    case 'local':
-      return <LocalRoot />
-  }
+
+  const view = (() => {
+    switch (window.api.purpose) {
+      case 'inbox':
+        return <InboxView />
+      case 'pr-review':
+        return window.api.prTarget ? <PRReviewView target={window.api.prTarget} /> : <FatalError msg="PR target missing from launch args" />
+      case 'local':
+        return <LocalRoot />
+    }
+  })()
+
+  return (
+    <>
+      {view}
+      {helpOpen && <HelpOverlay shortcuts={SHORTCUT_HELP} onClose={() => setHelpOpen(false)} />}
+    </>
+  )
 }
+
+const SHORTCUT_HELP: ShortcutHelp[] = [
+  { keys: '?', description: 'Show / hide this help' },
+  { keys: 'R', description: 'Start review (Local Mode or PR window)' },
+  { keys: '⌘↩', description: 'Submit the pending review' },
+  { keys: 'Esc', description: 'Discard the pending review (with confirm)' },
+  { keys: '↑ / ↓', description: 'Navigate the file tree (focus the tree first)' }
+]
 
 function FatalError({ msg }: { msg: string }) {
   return (
@@ -87,6 +120,7 @@ function LocalRoot() {
           </span>
           {sourcePicker}
           <GhAuthIndicator />
+          <HelpButton />
         </header>
       </main>
     )
@@ -227,6 +261,7 @@ function PRReviewView({ target }: { target: PrTarget }) {
             {status.type === 'error' && ` — error: ${status.message}`}
           </span>
           <GhAuthIndicator />
+          <HelpButton />
         </header>
       </main>
     )
@@ -384,9 +419,14 @@ function PRReviewLoaded({
 
   const discard = async () => {
     if (!pending) return
+    if (!confirm('Discard pending review?')) return
     await window.api.reviewDelete(reviewTarget)
     setPending(null)
   }
+
+  useKeyboardShortcut(pending ? null : { key: 'r', handler: startReview })
+  useKeyboardShortcut(pending ? { key: 'Enter', meta: true, allowInForm: true, handler: submit } : null)
+  useKeyboardShortcut(pending ? { key: 'Escape', handler: discard } : null)
 
   const annotations = useMemo(
     () =>
@@ -593,7 +633,7 @@ function PRReviewPanel({
                 <option value="new">new</option>
                 <option value="old">old</option>
               </select>
-              <button onClick={() => onRemoveComment(c.id)}>×</button>
+              <button onClick={() => onRemoveComment(c.id)} title="Remove comment">×</button>
             </div>
             <textarea
               value={c.body}
@@ -842,6 +882,27 @@ function StateBadge({ state }: { state: PullRequestSummary['state'] }) {
   )
 }
 
+const HELP_EVENT = 'dv:show-help'
+
+function HelpButton() {
+  return (
+    <button
+      onClick={() => window.dispatchEvent(new CustomEvent(HELP_EVENT))}
+      title="Keyboard shortcuts (?)"
+      style={{
+        fontSize: '0.75rem',
+        padding: '0.05rem 0.5rem',
+        borderRadius: 999,
+        border: '1px solid #ccc',
+        background: '#fff',
+        cursor: 'pointer'
+      }}
+    >
+      ?
+    </button>
+  )
+}
+
 function GhAuthIndicator() {
   const [auth, setAuth] = useState<AuthStatus | null>(null)
 
@@ -1013,9 +1074,14 @@ function LoadedView({
 
   const discardReview = async () => {
     if (!pending) return
+    if (!confirm('Discard pending review?')) return
     await window.api.reviewDelete(target)
     setPending(null)
   }
+
+  useKeyboardShortcut(pending ? null : { key: 'r', handler: startReview })
+  useKeyboardShortcut(pending ? { key: 'Enter', meta: true, allowInForm: true, handler: submitToAgent } : null)
+  useKeyboardShortcut(pending ? { key: 'Escape', handler: discardReview } : null)
 
   return (
     <main style={shellStyle}>
