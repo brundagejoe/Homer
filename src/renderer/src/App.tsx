@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { PatchDiff } from '@pierre/diffs/react'
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react'
-import type { FileWithPatch, PendingReview, LineComment, DiffSourceSpec } from '../../preload'
+import type {
+  AuthStatus,
+  FileWithPatch,
+  PendingReview,
+  LineComment,
+  DiffSourceSpec
+} from '../../preload'
 
 type Status =
   | { type: 'loading' }
@@ -34,16 +40,74 @@ export default function App() {
   if (status.type !== 'loaded') {
     return (
       <main style={shellStyle}>
-        <header style={statusBarStyle}>
-          {status.type === 'loading' && 'Loading…'}
-          {status.type === 'empty' && `${status.repo} — clean working tree`}
-          {status.type === 'error' && `Error: ${status.message}`}
+        <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between' }}>
+          <span>
+            {status.type === 'loading' && 'Loading…'}
+            {status.type === 'empty' && `${status.repo} — clean working tree`}
+            {status.type === 'error' && `Error: ${status.message}`}
+          </span>
+          <GhAuthIndicator />
         </header>
       </main>
     )
   }
 
   return <LoadedView repo={status.repo} files={status.files} />
+}
+
+function GhAuthIndicator() {
+  const [auth, setAuth] = useState<AuthStatus | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () =>
+      window.api.ghAuthStatus().then(s => {
+        if (!cancelled) setAuth(s)
+      })
+    load()
+    const onFocus = () => load()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [])
+
+  if (!auth) return <span style={ghPillStyle('#aaa')}>gh: …</span>
+
+  switch (auth.kind) {
+    case 'authenticated':
+      return <span style={ghPillStyle('#2a8b3a')} title="GitHub CLI is authenticated">gh @{auth.user}</span>
+    case 'not-authenticated':
+      return (
+        <span style={ghPillStyle('#b77400')} title="Run `gh auth login` in a terminal">
+          gh: not signed in
+        </span>
+      )
+    case 'gh-not-installed':
+      return (
+        <span style={ghPillStyle('#b00020')} title="Install gh: https://cli.github.com">
+          gh: not installed
+        </span>
+      )
+    case 'error':
+      return (
+        <span style={ghPillStyle('#b00020')} title={auth.message}>
+          gh: error
+        </span>
+      )
+  }
+}
+
+function ghPillStyle(color: string): React.CSSProperties {
+  return {
+    fontSize: '0.75rem',
+    color,
+    border: `1px solid ${color}`,
+    padding: '0.1rem 0.5rem',
+    borderRadius: 999,
+    cursor: 'help'
+  }
 }
 
 function LoadedView({ repo, files: liveFiles }: { repo: string; files: FileWithPatch[] }) {
@@ -158,8 +222,8 @@ function LoadedView({ repo, files: liveFiles }: { repo: string; files: FileWithP
 
   return (
     <main style={shellStyle}>
-      <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between' }}>
-        <span>
+      <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+        <span style={{ flex: 1 }}>
           {repo} — working tree vs HEAD ({files.length} file{files.length === 1 ? '' : 's'})
           {pending && (
             <span style={{ marginLeft: '0.75rem', color: '#888' }}>
@@ -169,6 +233,7 @@ function LoadedView({ repo, files: liveFiles }: { repo: string; files: FileWithP
           )}
         </span>
         {!pending && <button onClick={startReview}>Start review</button>}
+        <GhAuthIndicator />
       </header>
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <aside style={treePaneStyle}>

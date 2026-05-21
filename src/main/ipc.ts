@@ -3,13 +3,15 @@ import { join } from 'node:path'
 import { GitDiffProvider, FileStatus } from './git-diff-provider'
 import { PendingReviewStore, PendingReview, ReviewKey } from './pending-review-store'
 import { toAgentPrompt } from './review-formatter'
+import { GhAuthResolver, AuthStatus } from './gh-auth-resolver'
 
 export const CHANNELS = {
   getLocalDiff: 'git:local-diff',
   reviewGet: 'review:get',
   reviewUpsert: 'review:upsert',
   reviewDelete: 'review:delete',
-  reviewSubmitToAgent: 'review:submit-to-agent'
+  reviewSubmitToAgent: 'review:submit-to-agent',
+  ghAuthStatus: 'gh:auth-status'
 } as const
 
 export interface FileWithPatch {
@@ -25,6 +27,7 @@ export interface LocalDiffResult {
 }
 
 const provider = new GitDiffProvider()
+const ghAuth = new GhAuthResolver()
 let storeInstance: PendingReviewStore | null = null
 
 function store(): PendingReviewStore {
@@ -79,4 +82,6 @@ export function registerIpcHandlers(): void {
     clipboard.writeText(toAgentPrompt(review))
     store().delete({ repoPath: review.repoPath, sourceSpec: review.sourceSpec })
   })
+
+  ipcMain.handle(CHANNELS.ghAuthStatus, async (): Promise<AuthStatus> => ghAuth.status())
 }

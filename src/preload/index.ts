@@ -50,6 +50,12 @@ export interface ReviewKey {
   sourceSpec: DiffSourceSpec
 }
 
+export type AuthStatus =
+  | { kind: 'authenticated'; user: string }
+  | { kind: 'not-authenticated' }
+  | { kind: 'gh-not-installed' }
+  | { kind: 'error'; message: string }
+
 const api = {
   repoPath,
   getLocalDiff: (path: string): Promise<LocalDiffResult> => ipcRenderer.invoke('git:local-diff', path),
@@ -57,7 +63,8 @@ const api = {
   reviewUpsert: (review: PendingReview): Promise<void> => ipcRenderer.invoke('review:upsert', review),
   reviewDelete: (key: ReviewKey): Promise<void> => ipcRenderer.invoke('review:delete', key),
   reviewSubmitToAgent: (review: PendingReview): Promise<void> =>
-    ipcRenderer.invoke('review:submit-to-agent', review)
+    ipcRenderer.invoke('review:submit-to-agent', review),
+  ghAuthStatus: (): Promise<AuthStatus> => ipcRenderer.invoke('gh:auth-status')
 }
 
 export type DiffViewerApi = typeof api
