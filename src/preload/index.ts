@@ -36,9 +36,11 @@ export interface LocalDiffResult {
   files: FileWithPatch[]
 }
 
-export interface DiffSourceSpec {
-  type: 'working-tree-vs-head'
-}
+export type ReviewTarget =
+  | { kind: 'local'; repoPath: string; source: { type: 'working-tree-vs-head' } }
+  | { kind: 'pr'; owner: string; repo: string; number: number }
+
+export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
 
 export interface LineComment {
   id: string
@@ -46,6 +48,7 @@ export interface LineComment {
   lineNumber: number
   side: 'old' | 'new'
   body: string
+  inReplyToId?: number
 }
 
 export interface DiffSnapshot {
@@ -53,18 +56,13 @@ export interface DiffSnapshot {
 }
 
 export interface PendingReview {
-  repoPath: string
-  sourceSpec: DiffSourceSpec
+  target: ReviewTarget
   snapshot: DiffSnapshot
   lineComments: LineComment[]
   summary: string
+  event?: ReviewEvent
   createdAt: number
   updatedAt: number
-}
-
-export interface ReviewKey {
-  repoPath: string
-  sourceSpec: DiffSourceSpec
 }
 
 export type AuthStatus =
@@ -139,11 +137,14 @@ const api = {
   purpose,
   prTarget,
   getLocalDiff: (path: string): Promise<LocalDiffResult> => ipcRenderer.invoke('git:local-diff', path),
-  reviewGet: (key: ReviewKey): Promise<PendingReview | null> => ipcRenderer.invoke('review:get', key),
+  reviewGet: (target: ReviewTarget): Promise<PendingReview | null> =>
+    ipcRenderer.invoke('review:get', target),
   reviewUpsert: (review: PendingReview): Promise<void> => ipcRenderer.invoke('review:upsert', review),
-  reviewDelete: (key: ReviewKey): Promise<void> => ipcRenderer.invoke('review:delete', key),
+  reviewDelete: (target: ReviewTarget): Promise<void> => ipcRenderer.invoke('review:delete', target),
   reviewSubmitToAgent: (review: PendingReview): Promise<void> =>
     ipcRenderer.invoke('review:submit-to-agent', review),
+  reviewSubmitToGithub: (review: PendingReview): Promise<{ url: string }> =>
+    ipcRenderer.invoke('review:submit-to-github', review),
   ghAuthStatus: (): Promise<AuthStatus> => ipcRenderer.invoke('gh:auth-status'),
   githubListPRs: (): Promise<InboxResult> => ipcRenderer.invoke('github:list-prs'),
   githubGetPR: (t: PrTarget): Promise<PullRequestDetails> => ipcRenderer.invoke('github:get-pr', t),

@@ -1,4 +1,4 @@
-import type { PendingReview, LineComment, DiffSnapshot } from './pending-review-store'
+import type { PendingReview, LineComment, DiffSnapshot, ReviewEvent } from './pending-review-store'
 
 const HUNK_HEADER_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/
 
@@ -56,9 +56,7 @@ export function toAgentPrompt(review: PendingReview): string {
   for (const list of byPath.values()) {
     list.sort((a, b) => a.lineNumber - b.lineNumber)
   }
-  const pathOrder = Array.from(byPath.keys())
-
-  for (const path of pathOrder) {
+  for (const path of byPath.keys()) {
     sections.push(`## ${path}`, '')
     for (const comment of byPath.get(path)!) {
       sections.push(renderComment(comment, review.snapshot))
@@ -66,4 +64,36 @@ export function toAgentPrompt(review: PendingReview): string {
   }
 
   return sections.join('\n')
+}
+
+export interface GitHubReviewComment {
+  path: string
+  line?: number
+  side?: 'LEFT' | 'RIGHT'
+  body: string
+  in_reply_to?: number
+}
+
+export interface GitHubReviewPayload {
+  body: string
+  event: ReviewEvent
+  comments: GitHubReviewComment[]
+}
+
+export function toGitHubReview(review: PendingReview): GitHubReviewPayload {
+  return {
+    body: review.summary,
+    event: review.event ?? 'COMMENT',
+    comments: review.lineComments.map(c => {
+      if (c.inReplyToId != null) {
+        return { path: c.path, body: c.body, in_reply_to: c.inReplyToId }
+      }
+      return {
+        path: c.path,
+        line: c.lineNumber,
+        side: c.side === 'old' ? 'LEFT' : 'RIGHT',
+        body: c.body
+      }
+    })
+  }
 }

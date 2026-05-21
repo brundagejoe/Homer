@@ -85,6 +85,29 @@ export interface ListIssueCommentsParams {
   issue_number: number
 }
 
+export interface CreateReviewComment {
+  path: string
+  line?: number
+  side?: 'LEFT' | 'RIGHT'
+  body: string
+  in_reply_to?: number
+}
+
+export interface CreateReviewParams {
+  owner: string
+  repo: string
+  pull_number: number
+  body?: string
+  event?: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
+  comments?: CreateReviewComment[]
+}
+
+export interface CreateReviewResponse {
+  id: number
+  state: string
+  html_url: string
+}
+
 export interface OctokitLike {
   search: {
     issuesAndPullRequests(params: SearchParams): Promise<SearchResponse>
@@ -92,6 +115,7 @@ export interface OctokitLike {
   pulls: {
     get(params: PullGetParams): Promise<{ data: PullResponseData | string }>
     listReviewComments(params: ListReviewCommentsParams): Promise<{ data: ReviewCommentData[] }>
+    createReview(params: CreateReviewParams): Promise<{ data: CreateReviewResponse }>
   }
   issues: {
     listComments(params: ListIssueCommentsParams): Promise<{ data: IssueCommentData[] }>
@@ -226,6 +250,21 @@ export class GitHubClient {
       createdAt: c.created_at,
       inReplyToId: c.in_reply_to_id
     }))
+  }
+
+  async submitReview(
+    owner: string,
+    repo: string,
+    pull_number: number,
+    payload: { body: string; event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'; comments: CreateReviewComment[] }
+  ): Promise<CreateReviewResponse> {
+    const response = await this.octokit.pulls.createReview({
+      owner,
+      repo,
+      pull_number,
+      ...payload
+    })
+    return response.data
   }
 
   async getPRConversation(owner: string, repo: string, pull_number: number): Promise<ConversationComment[]> {
