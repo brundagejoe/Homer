@@ -1,8 +1,15 @@
-import { ipcMain } from 'electron'
+import { app, clipboard, ipcMain } from 'electron'
+import { join } from 'node:path'
 import { GitDiffProvider, FileStatus } from './git-diff-provider'
+import { PendingReviewStore, PendingReview, ReviewKey } from './pending-review-store'
+import { toAgentPrompt } from './review-formatter'
 
 export const CHANNELS = {
-  getLocalDiff: 'git:local-diff'
+  getLocalDiff: 'git:local-diff',
+  reviewGet: 'review:get',
+  reviewUpsert: 'review:upsert',
+  reviewDelete: 'review:delete',
+  reviewSubmitToAgent: 'review:submit-to-agent'
 } as const
 
 export interface FileWithPatch {
@@ -18,6 +25,14 @@ export interface LocalDiffResult {
 }
 
 const provider = new GitDiffProvider()
+let storeInstance: PendingReviewStore | null = null
+
+function store(): PendingReviewStore {
+  if (!storeInstance) {
+    storeInstance = new PendingReviewStore(join(app.getPath('userData'), 'pending-reviews.json'))
+  }
+  return storeInstance
+}
 
 export function splitPatchByFile(rawPatch: string): Map<string, string> {
   const map = new Map<string, string>()
@@ -39,20 +54,29 @@ export function splitPatchByFile(rawPatch: string): Map<string, string> {
 }
 
 export function registerIpcHandlers(): void {
-  ipcMain.handle(CHANNELS.getLocalDiff, async (_event, repoPath: string): Promise<LocalDiffResult> => {
+  ipcMain.handle(CHANNELS.getLocalDiff, async (_e, repoPath: string): Promise<LocalDiffResult> => {
     const source = { type: 'working-tree-vs-head' as const }
     const [data, rawPatch] = await Promise.all([
       provider.getDiff(repoPath, source),
       provider.getRawPatch(repoPath, source)
     ])
     const patches = splitPatchByFile(rawPatch)
-    const files: FileWithPatch[] = data.files.map(f => ({
-      path: f.path,
-      oldPath: f.oldPath,
-      status: f.status,
-      isBinary: f.isBinary,
-      patch: patches.get(f.path) ?? ''
-    }))
-    return { files }
+    return {
+      files: data.files.map(f => ({
+        path: f.path,
+        oldPath: f.oldPath,
+        status: f.status,
+        isBinary: f.isBinary,
+        patch: patches.get(f.path) ?? ''
+      }))
+    }
+  })
+
+  ipcMain.handle(CHANNELS.reviewGet, (_e, key: ReviewKey): PendingReview | null => store().get(key))
+  ipcMain.handle(CHANNELS.reviewUpsert, (_e, review: PendingReview): void => store().upsert(review))
+  ipcMain.handle(CHANNELS.reviewDelete, (_e, key: ReviewKey): void => store().delete(key))
+  ipcMain.handle(CHANNELS.reviewSubmitToAgent, (_e, review: PendingReview): void => {
+    clipboard.writeText(toAgentPrompt(review))
+    store().delete({ repoPath: review.repoPath, sourceSpec: review.sourceSpec })
   })
 }

@@ -19,10 +19,45 @@ export interface LocalDiffResult {
   files: FileWithPatch[]
 }
 
+export interface DiffSourceSpec {
+  type: 'working-tree-vs-head'
+}
+
+export interface LineComment {
+  id: string
+  path: string
+  lineNumber: number
+  side: 'old' | 'new'
+  body: string
+}
+
+export interface DiffSnapshot {
+  files: FileWithPatch[]
+}
+
+export interface PendingReview {
+  repoPath: string
+  sourceSpec: DiffSourceSpec
+  snapshot: DiffSnapshot
+  lineComments: LineComment[]
+  summary: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ReviewKey {
+  repoPath: string
+  sourceSpec: DiffSourceSpec
+}
+
 const api = {
   repoPath,
-  getLocalDiff: (path: string): Promise<LocalDiffResult> =>
-    ipcRenderer.invoke('git:local-diff', path)
+  getLocalDiff: (path: string): Promise<LocalDiffResult> => ipcRenderer.invoke('git:local-diff', path),
+  reviewGet: (key: ReviewKey): Promise<PendingReview | null> => ipcRenderer.invoke('review:get', key),
+  reviewUpsert: (review: PendingReview): Promise<void> => ipcRenderer.invoke('review:upsert', review),
+  reviewDelete: (key: ReviewKey): Promise<void> => ipcRenderer.invoke('review:delete', key),
+  reviewSubmitToAgent: (review: PendingReview): Promise<void> =>
+    ipcRenderer.invoke('review:submit-to-agent', review)
 }
 
 export type DiffViewerApi = typeof api
