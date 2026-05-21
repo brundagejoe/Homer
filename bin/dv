@@ -1,10 +1,13 @@
 #!/bin/sh
-# dv — launch Diff Viewer for the current git repo.
-# Requires a build at out/. Run `bun run build` first.
+# dv — launch Diff Viewer for a git repo or a GitHub PR URL.
+#   dv                                 → opens local-mode for $PWD
+#   dv /path/to/repo                   → opens local-mode for that path
+#   dv https://github.com/o/r/pull/N   → opens that PR's review window
 set -e
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 if [ ! -f "$APP_DIR/out/main/index.js" ]; then
   echo "diff-viewer build not found. Run 'bun run build' in $APP_DIR first." >&2
   exit 1
 fi
-exec "$APP_DIR/node_modules/.bin/electron" "$APP_DIR" "$(pwd)"
+TARGET="${1:-$(pwd)}"
+exec "$APP_DIR/node_modules/.bin/electron" "$APP_DIR" "$TARGET"

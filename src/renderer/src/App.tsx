@@ -567,9 +567,18 @@ type InboxStatus =
   | { type: 'loaded'; result: InboxResult }
   | { type: 'error'; message: string }
 
+const PR_URL_RE = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#].*)?$/
+
+function parsePrUrlClient(input: string): { owner: string; repo: string; number: number } | null {
+  const m = input.trim().match(PR_URL_RE)
+  return m ? { owner: m[1], repo: m[2], number: Number(m[3]) } : null
+}
+
 function InboxView() {
   const [status, setStatus] = useState<InboxStatus>({ type: 'loading' })
   const [lastFetched, setLastFetched] = useState<number | null>(null)
+  const [urlInput, setUrlInput] = useState('')
+  const [urlError, setUrlError] = useState('')
 
   const load = () => {
     window.api
@@ -613,6 +622,30 @@ function InboxView() {
         <GhAuthIndicator />
       </header>
       <section style={{ flex: 1, overflow: 'auto', padding: '0.75rem 1rem' }}>
+        <form
+          onSubmit={e => {
+            e.preventDefault()
+            const target = parsePrUrlClient(urlInput)
+            if (!target) {
+              setUrlError('Not a github.com PR URL')
+              return
+            }
+            setUrlError('')
+            setUrlInput('')
+            window.api.openPRReview(target)
+          }}
+          style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}
+        >
+          <input
+            type="text"
+            value={urlInput}
+            onChange={e => setUrlInput(e.target.value)}
+            placeholder="Paste a GitHub PR URL…"
+            style={{ flex: 1, padding: '0.35rem 0.5rem', fontSize: '0.85rem' }}
+          />
+          <button type="submit">Open</button>
+        </form>
+        {urlError && <div style={{ color: '#b00020', fontSize: '0.8rem', marginBottom: '0.5rem' }}>{urlError}</div>}
         {status.type === 'loading' && <div style={{ color: '#888' }}>Loading…</div>}
         {status.type === 'error' && (
           <div style={{ color: '#b00020' }}>Failed to load: {status.message}</div>

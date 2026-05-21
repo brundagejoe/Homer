@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { join, resolve } from 'node:path'
 import { registerIpcHandlers, setOpenWindow } from './ipc'
+import { parsePrUrl } from './pr-url'
 
 const REPO_FLAG = '--repo-path='
 const PR_FLAG = '--pr='
@@ -21,7 +22,11 @@ function resolveLaunchTarget(argv: string[]): LaunchTarget {
   const explicit = argv.find(a => a.startsWith(REPO_FLAG))
   if (explicit) return { kind: 'local', repoPath: explicit.slice(REPO_FLAG.length) }
   const positional = argv.slice(2).find(a => !a.startsWith('-') && !a.includes('app.asar'))
-  if (positional) return { kind: 'local', repoPath: resolve(positional) }
+  if (positional) {
+    const fromUrl = parsePrUrl(positional)
+    if (fromUrl) return { kind: 'pr-review', ...fromUrl }
+    return { kind: 'local', repoPath: resolve(positional) }
+  }
   return { kind: 'inbox' }
 }
 
