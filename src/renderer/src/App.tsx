@@ -996,6 +996,11 @@ function PRReviewLoaded({
               renderHeaderPrefix={renderHeaderPrefix}
               options={{
                 enableGutterUtility: true,
+                // Show the highlighted range while the user drags from
+                // the gutter +. Without this the drag-select still
+                // works data-wise, but there's no visual cue so it
+                // feels like dragging does nothing.
+                enableLineSelection: true,
                 onGutterUtilityClick: (range, ctx) => {
                   startDraft({
                     path: ctx.item.id,
