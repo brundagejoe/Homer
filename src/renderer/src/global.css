@@ -191,13 +191,41 @@ a {
   padding: 0.5rem 0.75rem 0.25rem;
 }
 
-/* Force Pierre's diff to use our background tokens so it sits flush in
-   the layout — no more "viewport-filling gray rectangle" under short diffs. */
+/* Pierre theming + stronger inter-file separators. Pierre uses
+   [data-*] attribute selectors, so we can target them externally. */
 .diff-host {
   --diffs-light-bg: var(--bg);
   --diffs-dark-bg: var(--bg);
   background: var(--bg);
   height: 100%;
+}
+
+/* Make each file's header into a clear "card top" so file boundaries
+   pop visually. Plus a chunkier strip behind it. */
+.diff-host [data-diffs-header] {
+  background: var(--bg-sidebar);
+  border-top: 1px solid var(--hairline-strong);
+  border-bottom: 1px solid var(--hairline);
+  padding: 6px 10px;
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+}
+
+/* First file's header doesn't need the top divider — it sits flush. */
+.diff-host > *:first-child [data-diffs-header],
+.diff-host [data-codeview-item]:first-child [data-diffs-header] {
+  border-top: none;
+}
+
+/* Tighten Pierre's "X unmodified lines" gap fillers between hunks. */
+.diff-host [data-separator] {
+  background: var(--bg-sidebar);
+  color: var(--fg-tertiary);
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
 }
 
 /* Tooltip pills (gh auth, state badges) — use the design tokens. */

@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
-import { PatchDiff } from '@pierre/diffs/react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { CodeView, CodeViewHandle } from '@pierre/diffs/react'
+import { processFile } from '@pierre/diffs'
+import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs'
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
@@ -26,6 +28,60 @@ type Status =
   | { type: 'error'; message: string }
 
 const DEFAULT_SOURCE: DiffSourceSpec = { type: 'working-tree-vs-head' }
+
+type Annotator<T> = (path: string) => DiffLineAnnotation<T>[] | undefined
+
+function buildCodeViewItems<T>(
+  files: { path: string; patch: string; isBinary: boolean }[],
+  annotationsFor?: Annotator<T>,
+  collapsedPaths?: ReadonlySet<string>
+): CodeViewDiffItem<T>[] {
+  const items: CodeViewDiffItem<T>[] = []
+  for (const f of files) {
+    if (f.isBinary || !f.patch) continue
+    const fileDiff = processFile(f.patch)
+    if (!fileDiff) continue
+    const collapsed = collapsedPaths?.has(f.path) ?? false
+    items.push({
+      id: f.path,
+      type: 'diff',
+      fileDiff,
+      annotations: annotationsFor?.(f.path),
+      collapsed,
+      // Pierre uses `version` to detect item changes; bumping it when
+      // collapse state changes forces a re-render of that file's body.
+      version: collapsed ? 1 : 0
+    })
+  }
+  return items
+}
+
+function ChevronToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      title={collapsed ? 'Expand file' : 'Collapse file'}
+      aria-label={collapsed ? 'Expand file' : 'Collapse file'}
+      style={{
+        padding: 0,
+        margin: 0,
+        width: 14,
+        height: 14,
+        minWidth: 14,
+        fontSize: 9,
+        background: 'transparent',
+        border: 'none',
+        color: 'var(--fg-secondary)',
+        lineHeight: 1,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}
+    >
+      {collapsed ? '▶' : '▼'}
+    </button>
+  )
+}
 
 function localReviewTarget(repoPath: string, source: DiffSourceSpec): ReviewTarget {
   return { kind: 'local', repoPath, source }
@@ -428,14 +484,68 @@ function PRReviewLoaded({
   useKeyboardShortcut(pending ? { key: 'Enter', meta: true, allowInForm: true, handler: submit } : null)
   useKeyboardShortcut(pending ? { key: 'Escape', handler: discard } : null)
 
-  const annotations = useMemo(
-    () =>
-      inlineForFile.map(c => ({
-        side: c.side === 'LEFT' ? ('deletions' as const) : ('additions' as const),
+  const annotationsByPath = useMemo(() => {
+    const map = new Map<string, DiffLineAnnotation<InlineComment>[]>()
+    for (const c of inline) {
+      const list = map.get(c.path) ?? []
+      list.push({
+        side: c.side === 'LEFT' ? 'deletions' : 'additions',
         lineNumber: c.lineNumber,
         metadata: c
-      })),
-    [inlineForFile]
+      })
+      map.set(c.path, list)
+    }
+    return map
+  }, [inline])
+
+  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set())
+
+  const toggleCollapsed = useCallback((path: string) => {
+    setCollapsedPaths(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+
+  const codeViewItems = useMemo(
+    () =>
+      buildCodeViewItems<InlineComment>(
+        files.map(f => ({ ...f, isBinary: false })),
+        p => annotationsByPath.get(p),
+        collapsedPaths
+      ),
+    [files, annotationsByPath, collapsedPaths]
+  )
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const codeViewRef = useRef<CodeViewHandle<any>>(null)
+  useEffect(() => {
+    if (!selectedPath || !codeViewRef.current) return
+    setCollapsedPaths(prev => {
+      if (!prev.has(selectedPath)) return prev
+      const next = new Set(prev)
+      next.delete(selectedPath)
+      return next
+    })
+    codeViewRef.current.scrollTo({
+      type: 'item',
+      id: selectedPath,
+      align: 'start',
+      behavior: 'smooth'
+    })
+  }, [selectedPath])
+
+  const renderHeaderPrefix = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (item: any) => (
+      <ChevronToggle
+        collapsed={collapsedPaths.has(item.id)}
+        onToggle={() => toggleCollapsed(item.id)}
+      />
+    ),
+    [collapsedPaths, toggleCollapsed]
   )
 
   const repliesByParent = useMemo(() => {
@@ -479,27 +589,60 @@ function PRReviewLoaded({
         <aside style={treePaneStyle}>
           <FileTree model={model} />
         </aside>
-        <section className="diff-host" style={{ flex: 1, overflow: 'auto' }}>
+        <section
+          className="diff-host"
+          style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}
+        >
           {pr.body && (
-            <details open style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #eee' }}>
-              <summary style={{ cursor: 'pointer', color: '#555', fontSize: '0.85rem' }}>Description</summary>
-              <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: '0.5rem 0 0' }}>{pr.body}</pre>
+            <details
+              open
+              style={{
+                padding: '0.5rem 1rem',
+                borderBottom: '1px solid var(--hairline)',
+                flexShrink: 0,
+                background: 'var(--bg)'
+              }}
+            >
+              <summary
+                style={{ cursor: 'pointer', color: 'var(--fg-secondary)', fontSize: 12.5 }}
+              >
+                Description
+              </summary>
+              <pre
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  fontFamily: 'inherit',
+                  margin: '0.5rem 0 0',
+                  fontSize: 13
+                }}
+              >
+                {pr.body}
+              </pre>
             </details>
           )}
-          {selectedFile ? (
-            <PatchDiff
-              patch={selectedFile.patch}
-              lineAnnotations={annotations}
-              renderAnnotation={ann => (
+          {codeViewItems.length > 0 ? (
+            <CodeView
+              ref={codeViewRef}
+              items={codeViewItems}
+              style={{ flex: 1 }}
+              renderHeaderPrefix={renderHeaderPrefix}
+              renderAnnotation={(ann) => (
                 <div style={inlineAnnotationStyle}>
-                  <div style={{ fontSize: '0.7rem', color: '#888' }}>
-                    {ann.metadata.author} · {new Date(ann.metadata.createdAt).toLocaleString()}
+                  <div style={{ fontSize: 11, color: 'var(--fg-tertiary)' }}>
+                    {(ann as DiffLineAnnotation<InlineComment>).metadata!.author} ·{' '}
+                    {new Date((ann as DiffLineAnnotation<InlineComment>).metadata!.createdAt).toLocaleString()}
                   </div>
-                  <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{ann.metadata.body}</div>
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 12.5 }}>
+                    {(ann as DiffLineAnnotation<InlineComment>).metadata!.body}
+                  </div>
                 </div>
               )}
             />
-          ) : null}
+          ) : (
+            <div style={{ padding: '1rem', color: 'var(--fg-tertiary)' }}>
+              No diff to display
+            </div>
+          )}
         </section>
         {pending && (
           <PRReviewPanel
@@ -982,6 +1125,50 @@ function LoadedView({
   const selectedPath = selectedPaths[0] ?? paths[0]
   const selectedFile = files.find(f => f.path === selectedPath)
 
+  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set())
+
+  const toggleCollapsed = useCallback((path: string) => {
+    setCollapsedPaths(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+
+  const codeViewItems = useMemo(
+    () => buildCodeViewItems(files, undefined, collapsedPaths),
+    [files, collapsedPaths]
+  )
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const codeViewRef = useRef<CodeViewHandle<any>>(null)
+  useEffect(() => {
+    if (!selectedPath || !codeViewRef.current) return
+    setCollapsedPaths(prev => {
+      if (!prev.has(selectedPath)) return prev
+      const next = new Set(prev)
+      next.delete(selectedPath)
+      return next
+    })
+    codeViewRef.current.scrollTo({
+      type: 'item',
+      id: selectedPath,
+      align: 'start',
+      behavior: 'smooth'
+    })
+  }, [selectedPath])
+
+  const renderHeaderPrefix = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (item: any) => (
+      <ChevronToggle
+        collapsed={collapsedPaths.has(item.id)}
+        onToggle={() => toggleCollapsed(item.id)}
+      />
+    ),
+    [collapsedPaths, toggleCollapsed]
+  )
+
   const startReview = () => {
     const review: PendingReview = {
       target,
@@ -1088,14 +1275,19 @@ function LoadedView({
         <aside style={treePaneStyle}>
           <FileTree model={model} />
         </aside>
-        <section className="diff-host" style={{ flex: 1, overflow: 'auto' }}>
-          {selectedFile && selectedFile.patch ? (
-            <PatchDiff patch={selectedFile.patch} />
+        <section className="diff-host" style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+          {codeViewItems.length > 0 ? (
+            <CodeView
+              ref={codeViewRef}
+              items={codeViewItems}
+              style={{ height: '100%' }}
+              renderHeaderPrefix={renderHeaderPrefix}
+            />
           ) : (
-            <div style={{ padding: '1rem', color: '#888' }}>
+            <div style={{ padding: '1rem', color: 'var(--fg-tertiary)' }}>
               {selectedFile?.isBinary
                 ? 'Binary file — no diff preview'
-                : 'No diff for this file'}
+                : 'No diff to display'}
             </div>
           )}
         </section>
