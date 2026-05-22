@@ -959,13 +959,27 @@ function OpenOnGithubButton({ url }: { url: string }) {
   )
 }
 
+/**
+ * Minimum interval between automatic (focus / poll) inbox refreshes.
+ * Each refresh fans out to 3 search/issues calls, and GitHub's search
+ * resource caps at 30/min — without this, rapid focus toggling burns
+ * through the quota in seconds and trips a 403. The manual Refresh
+ * button bypasses this cooldown.
+ */
+const INBOX_AUTO_REFRESH_COOLDOWN_MS = 30_000
+
 function InboxView() {
   const [status, setStatus] = useState<InboxStatus>({ type: 'loading' })
   const [lastFetched, setLastFetched] = useState<number | null>(null)
   const [urlInput, setUrlInput] = useState('')
   const [urlError, setUrlError] = useState('')
+  const lastLoadAtRef = useRef(0)
 
-  const load = () => {
+  const load = (opts: { manual?: boolean } = {}) => {
+    if (!opts.manual && Date.now() - lastLoadAtRef.current < INBOX_AUTO_REFRESH_COOLDOWN_MS) {
+      return
+    }
+    lastLoadAtRef.current = Date.now()
     window.api
       .githubListPRs()
       .then(result => {
@@ -976,7 +990,7 @@ function InboxView() {
   }
 
   useEffect(() => {
-    load()
+    load({ manual: true })
     const onFocus = () => load()
     window.addEventListener('focus', onFocus)
     let timer: number | null = null
@@ -1003,7 +1017,7 @@ function InboxView() {
             </span>
           )}
         </span>
-        <Button onClick={load}>Refresh</Button>
+        <Button onClick={() => load({ manual: true })}>Refresh</Button>
         <GhAuthIndicator />
         <HelpButton />
       </TitleBar>
