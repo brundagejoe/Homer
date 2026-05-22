@@ -125,8 +125,9 @@ a {
   padding: 0.5rem 0.75rem 0.25rem;
 }
 
-/* Pierre theming + stronger inter-file separators. Pierre uses
-   [data-*] attribute selectors, so we can target them externally. */
+/* Pierre theming + bordered file cards. Pierre uses [data-*] attribute
+   selectors and a custom <diffs-container> element per file, which we
+   can target externally. */
 .diff-host {
   --diffs-light-bg: var(--bg);
   --diffs-dark-bg: var(--bg);
@@ -134,24 +135,32 @@ a {
   height: 100%;
 }
 
-/* Make each file's header into a clear "card top" so file boundaries
-   pop visually. Plus a chunkier strip behind it. */
+/* Each file is its own card with a clear border so file boundaries pop. */
+.diff-host diffs-container {
+  display: block;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  margin: 12px 12px 0;
+  /* `clip` keeps rounded corners while still letting position: sticky work
+     on descendants (overflow: hidden would clip the sticky header). */
+  overflow: clip;
+}
+
+.diff-host diffs-container:last-of-type {
+  margin-bottom: 24px;
+}
+
+/* The file header sits flush at the top of each card. Sticky against the
+   scroll container so the filename stays visible while scrolling. */
 .diff-host [data-diffs-header] {
   background: var(--bg-sidebar);
-  border-top: 1px solid var(--hairline-strong);
   border-bottom: 1px solid var(--hairline);
   padding: 6px 10px;
   font-weight: 500;
   position: sticky;
   top: 0;
   z-index: 2;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
-}
-
-/* First file's header doesn't need the top divider — it sits flush. */
-.diff-host > *:first-child [data-diffs-header],
-.diff-host [data-codeview-item]:first-child [data-diffs-header] {
-  border-top: none;
 }
 
 /* Tighten Pierre's "X unmodified lines" gap fillers between hunks. */

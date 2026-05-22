@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { CodeView } from '@pierre/diffs/react'
 import { processFile } from '@pierre/diffs'
 import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs'
@@ -345,6 +345,7 @@ function PRReviewView({ target }: { target: PrTarget }) {
             {status.type === 'loading' && ' — loading…'}
             {status.type === 'error' && ` — error: ${status.message}`}
           </span>
+          <OpenOnGithubButton url={prHtmlUrl(target)} />
           <GhAuthIndicator />
           <HelpButton />
         </TitleBar>
@@ -631,6 +632,7 @@ function PRReviewLoaded({
           💬{totalThreads > 0 ? ` ${totalThreads}` : ''}
         </Button>
         <StateBadge state={pr.state} />
+        <OpenOnGithubButton url={pr.url || prHtmlUrl(target)} />
         <GhAuthIndicator />
         <HelpButton />
       </TitleBar>
@@ -910,6 +912,24 @@ const PR_URL_RE = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#
 function parsePrUrlClient(input: string): { owner: string; repo: string; number: number } | null {
   const m = input.trim().match(PR_URL_RE)
   return m ? { owner: m[1], repo: m[2], number: Number(m[3]) } : null
+}
+
+function prHtmlUrl(t: PrTarget): string {
+  return `https://github.com/${t.owner}/${t.repo}/pull/${t.number}`
+}
+
+function OpenOnGithubButton({ url }: { url: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      title="Open PR on GitHub"
+      className="inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-fg px-1.5 py-0.5 rounded hover:bg-hover [-webkit-app-region:no-drag]"
+    >
+      <ExternalLink size={12} strokeWidth={2.2} />
+    </a>
+  )
 }
 
 function InboxView() {
