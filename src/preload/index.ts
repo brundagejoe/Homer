@@ -53,8 +53,14 @@ export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
 export interface LineComment {
   id: string
   path: string
+  /** Last line of the comment's anchor range (or the single line). */
   lineNumber: number
+  /** Side for the last line. */
   side: 'old' | 'new'
+  /** First line of a multi-line range. Omit for single-line comments. */
+  startLineNumber?: number
+  /** Side for the first line of a multi-line range. */
+  startSide?: 'old' | 'new'
   body: string
   inReplyToId?: number
 }
@@ -119,8 +125,14 @@ export interface PullRequestDetails {
 export interface InlineComment {
   id: number
   path: string
+  /** Last line of the comment's anchor range (or the single line). */
   lineNumber: number
+  /** Side for the last line. */
   side: 'LEFT' | 'RIGHT'
+  /** First line of a multi-line range. Omit for single-line comments. */
+  startLine?: number
+  /** Side for the first line of a multi-line range. */
+  startSide?: 'LEFT' | 'RIGHT'
   body: string
   author: string
   createdAt: string

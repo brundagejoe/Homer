@@ -53,6 +53,9 @@ export interface ReviewCommentData {
   line: number | null
   original_line: number | null
   side: 'LEFT' | 'RIGHT' | null
+  /** Set by GitHub when the comment spans multiple lines. */
+  start_line?: number | null
+  start_side?: 'LEFT' | 'RIGHT' | null
   body: string
   user: { login: string } | null
   created_at: string
@@ -89,6 +92,9 @@ export interface CreateReviewComment {
   path: string
   line?: number
   side?: 'LEFT' | 'RIGHT'
+  /** Provide together with start_side for multi-line comments. */
+  start_line?: number
+  start_side?: 'LEFT' | 'RIGHT'
   body: string
   in_reply_to?: number
 }
@@ -162,8 +168,14 @@ export interface PullRequestDetails {
 export interface InlineComment {
   id: number
   path: string
+  /** Last line of the comment's anchor range (or the single line). */
   lineNumber: number
+  /** Side for the last line. */
   side: 'LEFT' | 'RIGHT'
+  /** First line of a multi-line range. Omit for single-line comments. */
+  startLine?: number
+  /** Side for the first line of a multi-line range. */
+  startSide?: 'LEFT' | 'RIGHT'
   body: string
   author: string
   createdAt: string
@@ -245,6 +257,8 @@ export class GitHubClient {
       path: c.path,
       lineNumber: c.line ?? c.original_line ?? 0,
       side: c.side ?? 'RIGHT',
+      ...(c.start_line != null ? { startLine: c.start_line } : {}),
+      ...(c.start_side != null ? { startSide: c.start_side } : {}),
       body: c.body,
       author: c.user?.login ?? 'unknown',
       createdAt: c.created_at,

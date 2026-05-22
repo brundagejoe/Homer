@@ -129,4 +129,32 @@ describe('toGitHubReview', () => {
       { path: 'src/x.ts', body: 'thanks', in_reply_to: 999 }
     ])
   })
+
+  test('maps a multi-line comment with start_line + start_side', () => {
+    const payload = toGitHubReview(
+      review(prTarget, {
+        lineComments: [
+          {
+            id: 'm1',
+            path: 'src/x.ts',
+            lineNumber: 18,
+            side: 'new',
+            startLineNumber: 12,
+            startSide: 'new',
+            body: 'refactor this block'
+          }
+        ]
+      })
+    )
+    expect(payload.comments).toEqual([
+      {
+        path: 'src/x.ts',
+        line: 18,
+        side: 'RIGHT',
+        start_line: 12,
+        start_side: 'RIGHT',
+        body: 'refactor this block'
+      }
+    ])
+  })
 })

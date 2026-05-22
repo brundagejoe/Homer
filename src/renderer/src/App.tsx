@@ -92,6 +92,45 @@ function useDiffOrderSort(paths: readonly string[]) {
 
 type Annotator<T> = (path: string) => DiffLineAnnotation<T>[] | undefined
 
+interface AnchorSpec {
+  lineNumber: number
+  side: 'old' | 'new'
+  startLineNumber?: number
+  startSide?: 'old' | 'new'
+}
+
+/** "12-18" if multi-line, "12" otherwise. */
+function formatLineRange(start: number | undefined, end: number): string {
+  return start != null && start !== end ? `${start}-${end}` : `${end}`
+}
+
+/**
+ * Normalize Pierre's SelectedLineRange (which may be reverse-ordered
+ * if the user drags upward) into an AnchorSpec keyed to last line +
+ * last side, with startLineNumber/startSide set only when the
+ * selection actually covers more than one line.
+ */
+function specFromRange(range: {
+  start: number
+  end: number
+  side?: 'deletions' | 'additions'
+  endSide?: 'deletions' | 'additions'
+}): AnchorSpec {
+  const sideStart = range.side === 'deletions' ? 'old' : 'new'
+  const sideEnd = (range.endSide ?? range.side) === 'deletions' ? 'old' : 'new'
+  const ascending = range.start <= range.end
+  const firstLine = ascending ? range.start : range.end
+  const lastLine = ascending ? range.end : range.start
+  const firstSide = ascending ? sideStart : sideEnd
+  const lastSide = ascending ? sideEnd : sideStart
+  const isMulti = firstLine !== lastLine || firstSide !== lastSide
+  return {
+    lineNumber: lastLine,
+    side: lastSide,
+    ...(isMulti ? { startLineNumber: firstLine, startSide: firstSide } : {})
+  }
+}
+
 function buildCodeViewItems<T>(
   files: { path: string; patch: string; isBinary: boolean }[],
   annotationsFor?: Annotator<T>,
@@ -151,10 +190,11 @@ function ExistingThreadAnnotation({
   hasReply: boolean
   onReply?: () => void
 }) {
+  const range = formatLineRange(comment.startLine, comment.lineNumber)
   return (
     <div className="review-annotation rounded-md px-2.5 py-1.5 mx-2 my-1 text-[12.5px]">
       <div className="text-[11px] text-subtle">
-        {comment.author} · {new Date(comment.createdAt).toLocaleString()}
+        {comment.author} · line {range} · {new Date(comment.createdAt).toLocaleString()}
       </div>
       <Markdown compact>{comment.body}</Markdown>
       {onReply && !hasReply && (
@@ -189,10 +229,11 @@ function PendingCommentEditor({
     ref.current?.focus()
   }, [])
   const canSubmit = comment.body.trim().length > 0
+  const range = formatLineRange(comment.startLineNumber, comment.lineNumber)
   return (
     <div className="border border-hairline-strong rounded-md bg-elevated px-2.5 py-2 mx-2 my-1 flex flex-col gap-2">
       <div className="text-[11px] text-muted">
-        {isReply ? 'Your reply' : 'Your comment'}
+        {isReply ? 'Your reply' : `Your comment · line ${range}`}
       </div>
       <Textarea
         ref={ref}
@@ -235,10 +276,13 @@ function PendingCommentCard({
   onDelete: () => void
 }) {
   const isReply = comment.inReplyToId != null
+  const range = formatLineRange(comment.startLineNumber, comment.lineNumber)
   return (
     <div className="border border-accent/40 bg-selected/60 rounded-md px-2.5 py-1.5 mx-2 my-1 flex flex-col gap-1 text-[12.5px]">
       <div className="flex items-center justify-between text-[11px] text-muted">
-        <span>{isReply ? 'Your reply · pending review' : 'Your comment · pending review'}</span>
+        <span>
+          {isReply ? 'Your reply · pending review' : `Your comment · line ${range} · pending review`}
+        </span>
         <div className="flex gap-1">
           <Tooltip content="Edit">
             <Button variant="ghost" size="icon" onClick={onEdit} aria-label="Edit comment">
@@ -601,16 +645,17 @@ function PRReviewLoaded({
 
   const startDraft = (spec: {
     path: string
-    lineNumber: number
-    side: 'old' | 'new'
+    anchor: AnchorSpec
     inReplyToId?: number
   }) => {
     const id = crypto.randomUUID()
     const comment: LineComment = {
       id,
       path: spec.path,
-      lineNumber: spec.lineNumber,
-      side: spec.side,
+      lineNumber: spec.anchor.lineNumber,
+      side: spec.anchor.side,
+      ...(spec.anchor.startLineNumber != null ? { startLineNumber: spec.anchor.startLineNumber } : {}),
+      ...(spec.anchor.startSide != null ? { startSide: spec.anchor.startSide } : {}),
       body: '',
       ...(spec.inReplyToId != null ? { inReplyToId: spec.inReplyToId } : {})
     }
@@ -703,16 +748,25 @@ function PRReviewLoaded({
     updatePending({ ...pending, event, updatedAt: Date.now() })
   }
 
+  type Destination = 'github' | 'agent'
+  const [destination, setDestination] = useState<Destination>('github')
+
   const submit = async () => {
     if (!pending) return
     setSubmitting(true)
     try {
-      const { url } = await window.api.reviewSubmitToGithub(pending)
-      setPending(null)
-      toast.success('Review submitted', {
-        actionLabel: 'Open on GitHub',
-        onAction: () => window.open(url, '_blank', 'noreferrer')
-      })
+      if (destination === 'github') {
+        const { url } = await window.api.reviewSubmitToGithub(pending)
+        setPending(null)
+        toast.success('Review submitted', {
+          actionLabel: 'Open on GitHub',
+          onAction: () => window.open(url, '_blank', 'noreferrer')
+        })
+      } else {
+        await window.api.reviewSubmitToAgent(pending)
+        setPending(null)
+        toast.success('Copied to clipboard', { timeout: 3000 })
+      }
     } catch (err) {
       toast.error('Submit failed', {
         description: (err as Error).message,
@@ -945,8 +999,7 @@ function PRReviewLoaded({
                 onGutterUtilityClick: (range, ctx) => {
                   startDraft({
                     path: ctx.item.id,
-                    lineNumber: range.start,
-                    side: range.side === 'deletions' ? 'old' : 'new'
+                    anchor: specFromRange(range)
                   })
                 }
               }}
@@ -966,8 +1019,10 @@ function PRReviewLoaded({
                       onReply={() =>
                         startDraft({
                           path: meta.comment.path,
-                          lineNumber: meta.comment.lineNumber,
-                          side: meta.comment.side === 'LEFT' ? 'old' : 'new',
+                          anchor: {
+                            lineNumber: meta.comment.lineNumber,
+                            side: meta.comment.side === 'LEFT' ? 'old' : 'new'
+                          },
                           inReplyToId: meta.comment.id
                         })
                       }
@@ -1009,6 +1064,8 @@ function PRReviewLoaded({
               <PRReviewPanel
                 pending={pending}
                 submitting={submitting}
+                destination={destination}
+                onDestination={setDestination}
                 onSummary={setSummary}
                 onEvent={setEvent}
                 onSubmit={submit}
@@ -1055,7 +1112,8 @@ function PRReviewLoaded({
             {inlineForFile.map(c => (
               <CommentCard key={`inline-${c.id}`}>
                 <div className="text-[11px] text-subtle">
-                  {c.author} · line {c.lineNumber} ({c.side === 'LEFT' ? 'old' : 'new'}) ·{' '}
+                  {c.author} · line {formatLineRange(c.startLine, c.lineNumber)} (
+                  {c.side === 'LEFT' ? 'old' : 'new'}) ·{' '}
                   {new Date(c.createdAt).toLocaleString()}
                 </div>
                 <Markdown compact>{c.body}</Markdown>
@@ -1074,6 +1132,8 @@ function PRReviewLoaded({
 function PRReviewPanel({
   pending,
   submitting,
+  destination,
+  onDestination,
   onSummary,
   onEvent,
   onSubmit,
@@ -1081,6 +1141,8 @@ function PRReviewPanel({
 }: {
   pending: PendingReview
   submitting: boolean
+  destination: 'github' | 'agent'
+  onDestination: (d: 'github' | 'agent') => void
   onSummary: (s: string) => void
   onEvent: (e: ReviewEvent) => void
   onSubmit: () => void
@@ -1111,7 +1173,7 @@ function PRReviewPanel({
               className="p-1.5 border border-hairline rounded text-[11.5px] bg-elevated"
             >
               <div className="text-subtle text-[10.5px] truncate">
-                {c.path}:{c.lineNumber}
+                {c.path}:{formatLineRange(c.startLineNumber, c.lineNumber)}
                 {c.inReplyToId != null && ' · reply'}
               </div>
               <div className="line-clamp-2 text-fg">{c.body || '(empty)'}</div>
@@ -1131,16 +1193,29 @@ function PRReviewPanel({
       </label>
 
       <label className="flex flex-col gap-1">
-        <span className="text-[11px] text-muted">Submit as</span>
+        <span className="text-[11px] text-muted">Submit to</span>
         <Select
-          value={pending.event ?? 'COMMENT'}
-          onChange={e => onEvent(e.target.value as ReviewEvent)}
+          value={destination}
+          onChange={e => onDestination(e.target.value as 'github' | 'agent')}
         >
-          <option value="COMMENT">Comment</option>
-          <option value="APPROVE">Approve</option>
-          <option value="REQUEST_CHANGES">Request changes</option>
+          <option value="github">GitHub</option>
+          <option value="agent">Agent (clipboard)</option>
         </Select>
       </label>
+
+      {destination === 'github' && (
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-muted">Submit as</span>
+          <Select
+            value={pending.event ?? 'COMMENT'}
+            onChange={e => onEvent(e.target.value as ReviewEvent)}
+          >
+            <option value="COMMENT">Comment</option>
+            <option value="APPROVE">Approve</option>
+            <option value="REQUEST_CHANGES">Request changes</option>
+          </Select>
+        </label>
+      )}
 
       <div className="flex gap-2">
         <Button
@@ -1149,7 +1224,11 @@ function PRReviewPanel({
           disabled={submitting}
           className="flex-1"
         >
-          {submitting ? 'Submitting…' : 'Submit review'}
+          {submitting
+            ? 'Submitting…'
+            : destination === 'agent'
+              ? 'Copy for Agent'
+              : 'Submit review'}
         </Button>
         <Button onClick={onDiscard}>Discard</Button>
       </div>
@@ -1577,13 +1656,15 @@ function LoadedView({
    * are buffered here until the user clicks Add review comment, at
    * which point they're persisted into the pending review.
    */
-  const startDraft = (spec: { path: string; lineNumber: number; side: 'old' | 'new' }) => {
+  const startDraft = (spec: { path: string; anchor: AnchorSpec }) => {
     const id = crypto.randomUUID()
     const comment: LineComment = {
       id,
       path: spec.path,
-      lineNumber: spec.lineNumber,
-      side: spec.side,
+      lineNumber: spec.anchor.lineNumber,
+      side: spec.anchor.side,
+      ...(spec.anchor.startLineNumber != null ? { startLineNumber: spec.anchor.startLineNumber } : {}),
+      ...(spec.anchor.startSide != null ? { startSide: spec.anchor.startSide } : {}),
       body: ''
     }
     setEditingComments(prev => new Map(prev).set(id, { comment, isNew: true }))
@@ -1770,8 +1851,7 @@ function LoadedView({
                   onGutterUtilityClick: (range, ctx) => {
                     startDraft({
                       path: ctx.item.id,
-                      lineNumber: range.start,
-                      side: range.side === 'deletions' ? 'old' : 'new'
+                      anchor: specFromRange(range)
                     })
                   }
                 }}
@@ -1859,7 +1939,7 @@ function ReviewPanel({
               className="p-1.5 border border-hairline rounded text-[11.5px] bg-elevated"
             >
               <div className="text-subtle text-[10.5px] truncate">
-                {c.path}:{c.lineNumber}
+                {c.path}:{formatLineRange(c.startLineNumber, c.lineNumber)}
               </div>
               <div className="line-clamp-2 text-fg">{c.body || '(empty)'}</div>
             </div>
