@@ -3,6 +3,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { join, resolve } from 'node:path'
 import { registerIpcHandlers, setOpenWindow } from './ipc'
 import { parsePrUrl } from './pr-url'
+import { WindowStateStore } from './window-state-store'
 
 const REPO_FLAG = '--repo-path='
 const PR_FLAG = '--pr='
@@ -33,6 +34,37 @@ function resolveLaunchTarget(argv: string[]): LaunchTarget {
 let inboxWindow: BrowserWindow | null = null
 const localWindows = new Map<string, BrowserWindow>()
 const prWindows = new Map<string, BrowserWindow>()
+
+let windowStateStoreInstance: WindowStateStore | null = null
+function windowStateStore(): WindowStateStore {
+  if (!windowStateStoreInstance) {
+    windowStateStoreInstance = new WindowStateStore(join(app.getPath('userData'), 'window-state.json'))
+  }
+  return windowStateStoreInstance
+}
+
+/**
+ * Debounced bounds-save. Resize/move fire continuously; one disk write
+ * per ~250ms quiet period is plenty for "remember on next launch."
+ */
+function attachBoundsPersistence(win: BrowserWindow): void {
+  let timer: NodeJS.Timeout | null = null
+  const persist = () => {
+    if (win.isDestroyed()) return
+    const b = win.getBounds()
+    windowStateStore().save({ width: b.width, height: b.height, x: b.x, y: b.y })
+  }
+  const schedule = () => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(persist, 250)
+  }
+  win.on('resize', schedule)
+  win.on('move', schedule)
+  win.on('close', () => {
+    if (timer) clearTimeout(timer)
+    persist()
+  })
+}
 
 function prKey(t: { owner: string; repo: string; number: number }): string {
   return `${t.owner}/${t.repo}/${t.number}`
@@ -86,9 +118,12 @@ function openWindow(target: LaunchTarget): void {
       break
   }
 
+  const bounds = windowStateStore().get()
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: bounds.width,
+    height: bounds.height,
+    x: bounds.x,
+    y: bounds.y,
     show: false,
     autoHideMenuBar: true,
     title,
@@ -101,6 +136,7 @@ function openWindow(target: LaunchTarget): void {
       additionalArguments
     }
   })
+  attachBoundsPersistence(win)
 
   if (target.kind === 'inbox') {
     inboxWindow = win

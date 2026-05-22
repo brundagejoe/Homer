@@ -14,6 +14,7 @@ const CODE_VIEW_OPTIONS: CodeViewOptions<unknown> = {
 }
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
+import { usePersistedBoolean } from './usePersistedBoolean'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
 import { Markdown } from './Markdown'
 import { Button } from '@/components/ui/button'
@@ -558,7 +559,7 @@ function PRReviewLoaded({
   }, [inline])
 
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set())
-  const [conversationOpen, setConversationOpen] = useState(true)
+  const [conversationOpen, setConversationOpen] = usePersistedBoolean('conversation-open', true)
 
   const toggleCollapsed = useCallback((path: string) => {
     setCollapsedPaths(prev => {
