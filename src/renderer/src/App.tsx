@@ -173,6 +173,9 @@ const SHORTCUT_HELP: ShortcutHelp[] = [
   { keys: 'R', description: 'Start review (Local Mode or PR window)' },
   { keys: '⌘↩', description: 'Submit the pending review' },
   { keys: 'Esc', description: 'Discard the pending review (with confirm)' },
+  { keys: '⌘B', description: 'Toggle the file tree' },
+  { keys: '⌘E', description: 'Toggle the conversation panel (PR Review)' },
+  { keys: '⌘L', description: 'Toggle the review panel' },
   { keys: '↑ / ↓', description: 'Navigate the file tree (focus the tree first)' }
 ]
 
@@ -544,6 +547,38 @@ function PRReviewLoaded({
   useKeyboardShortcut(pending ? { key: 'Enter', meta: true, allowInForm: true, handler: submit } : null)
   useKeyboardShortcut(pending ? { key: 'Escape', handler: discard } : null)
 
+  const [fileTreeOpen, setFileTreeOpen] = usePersistedBoolean('file-tree-open', true)
+  const [conversationOpen, setConversationOpen] = usePersistedBoolean('conversation-open', true)
+  const [reviewPanelOpen, setReviewPanelOpen] = usePersistedBoolean('review-panel-open', true)
+
+  useKeyboardShortcut({
+    key: 'b',
+    meta: true,
+    allowInForm: true,
+    handler: e => {
+      e.preventDefault()
+      setFileTreeOpen(v => !v)
+    }
+  })
+  useKeyboardShortcut({
+    key: 'e',
+    meta: true,
+    allowInForm: true,
+    handler: e => {
+      e.preventDefault()
+      setConversationOpen(v => !v)
+    }
+  })
+  useKeyboardShortcut({
+    key: 'l',
+    meta: true,
+    allowInForm: true,
+    handler: e => {
+      e.preventDefault()
+      setReviewPanelOpen(v => !v)
+    }
+  })
+
   const annotationsByPath = useMemo(() => {
     const map = new Map<string, DiffLineAnnotation<InlineComment>[]>()
     for (const c of inline) {
@@ -559,7 +594,6 @@ function PRReviewLoaded({
   }, [inline])
 
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set())
-  const [conversationOpen, setConversationOpen] = usePersistedBoolean('conversation-open', true)
 
   const toggleCollapsed = useCallback((path: string) => {
     setCollapsedPaths(prev => {
@@ -648,7 +682,10 @@ function PRReviewLoaded({
             Start review
           </Button>
         )}
-        <Tooltip content={conversationOpen ? 'Hide conversation' : 'Show conversation'}>
+        <Tooltip
+          content={conversationOpen ? 'Hide conversation' : 'Show conversation'}
+          shortcut="⌘E"
+        >
           <Button
             variant="ghost"
             size="sm"
@@ -664,12 +701,16 @@ function PRReviewLoaded({
         <HelpButton />
       </TitleBar>
       <ResizablePanelGroup orientation="horizontal" id="pr-review-panes" className="flex-1 min-h-0">
-        <ResizablePanel defaultSize="18%" minSize="10%" maxSize="40%" className="overflow-hidden">
-          <aside className="w-full h-full overflow-auto bg-sidebar py-1.5">
-            <FileTree model={model} />
-          </aside>
-        </ResizablePanel>
-        <ResizableHandle />
+        {fileTreeOpen && (
+          <>
+            <ResizablePanel defaultSize="18%" minSize="10%" maxSize="40%" className="overflow-hidden">
+              <aside className="w-full h-full overflow-auto bg-sidebar py-1.5">
+                <FileTree model={model} />
+              </aside>
+            </ResizablePanel>
+            <ResizableHandle />
+          </>
+        )}
         <ResizablePanel defaultSize="60%" minSize="30%" className="overflow-hidden">
         <section
           ref={diffSectionRef}
@@ -708,7 +749,7 @@ function PRReviewLoaded({
           )}
         </section>
         </ResizablePanel>
-        {pending && (
+        {pending && reviewPanelOpen && (
           <>
             <ResizableHandle />
             <ResizablePanel defaultSize="22%" minSize="15%" maxSize="45%" className="overflow-hidden">
@@ -1373,6 +1414,28 @@ function LoadedView({
   useKeyboardShortcut(pending ? { key: 'Enter', meta: true, allowInForm: true, handler: submitToAgent } : null)
   useKeyboardShortcut(pending ? { key: 'Escape', handler: discardReview } : null)
 
+  const [fileTreeOpen, setFileTreeOpen] = usePersistedBoolean('file-tree-open', true)
+  const [reviewPanelOpen, setReviewPanelOpen] = usePersistedBoolean('review-panel-open', true)
+
+  useKeyboardShortcut({
+    key: 'b',
+    meta: true,
+    allowInForm: true,
+    handler: e => {
+      e.preventDefault()
+      setFileTreeOpen(v => !v)
+    }
+  })
+  useKeyboardShortcut({
+    key: 'l',
+    meta: true,
+    allowInForm: true,
+    handler: e => {
+      e.preventDefault()
+      setReviewPanelOpen(v => !v)
+    }
+  })
+
   return (
     <main className="h-screen flex flex-col bg-surface">
       <TitleBar>
@@ -1395,12 +1458,16 @@ function LoadedView({
         <HelpButton />
       </TitleBar>
       <ResizablePanelGroup orientation="horizontal" id="local-panes" className="flex-1 min-h-0">
-        <ResizablePanel defaultSize="20%" minSize="10%" maxSize="40%" className="overflow-hidden">
-          <aside className="w-full h-full overflow-auto bg-sidebar py-1.5">
-            <FileTree model={model} />
-          </aside>
-        </ResizablePanel>
-        <ResizableHandle />
+        {fileTreeOpen && (
+          <>
+            <ResizablePanel defaultSize="20%" minSize="10%" maxSize="40%" className="overflow-hidden">
+              <aside className="w-full h-full overflow-auto bg-sidebar py-1.5">
+                <FileTree model={model} />
+              </aside>
+            </ResizablePanel>
+            <ResizableHandle />
+          </>
+        )}
         <ResizablePanel defaultSize={pending ? '55%' : '80%'} minSize="30%" className="overflow-hidden">
           <section
             ref={diffSectionRef}
@@ -1422,7 +1489,7 @@ function LoadedView({
             )}
           </section>
         </ResizablePanel>
-        {pending && (
+        {pending && reviewPanelOpen && (
           <>
             <ResizableHandle />
             <ResizablePanel defaultSize="25%" minSize="15%" maxSize="45%" className="overflow-hidden">
