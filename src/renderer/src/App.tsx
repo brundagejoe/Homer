@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
-import { CodeView } from '@pierre/diffs/react'
+import { CodeView, type CodeViewHandle } from '@pierre/diffs/react'
 import { processFile } from '@pierre/diffs'
 import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs'
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react'
@@ -223,20 +223,44 @@ function PendingCommentEditor({
   onSubmit: () => void
   onCancel: () => void
 }) {
-  const ref = useRef<HTMLTextAreaElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const isReply = comment.inReplyToId != null
   useEffect(() => {
-    ref.current?.focus()
+    textareaRef.current?.focus()
   }, [])
+  // Click-outside-to-cancel — matches the explicit user request that
+  // clicking off the composer dismisses it.
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const root = containerRef.current
+      if (!root) return
+      const target = e.target as Node | null
+      if (target && root.contains(target)) return
+      onCancel()
+    }
+    // Defer one tick so the opening pointerup doesn't immediately count
+    // as a click-outside.
+    const id = window.setTimeout(() => {
+      document.addEventListener('mousedown', onDown)
+    }, 0)
+    return () => {
+      window.clearTimeout(id)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [onCancel])
   const canSubmit = comment.body.trim().length > 0
   const range = formatLineRange(comment.startLineNumber, comment.lineNumber)
   return (
-    <div className="border border-hairline-strong rounded-md bg-elevated px-2.5 py-2 mx-2 my-1 flex flex-col gap-2">
+    <div
+      ref={containerRef}
+      className="border border-hairline-strong rounded-md bg-elevated px-2.5 py-2 mx-2 my-1 flex flex-col gap-2"
+    >
       <div className="text-[11px] text-muted">
         {isReply ? 'Your reply' : `Your comment · line ${range}`}
       </div>
       <Textarea
-        ref={ref}
+        ref={textareaRef}
         value={comment.body}
         onChange={e => onChange(e.target.value)}
         rows={3}
@@ -246,6 +270,9 @@ function PendingCommentEditor({
           if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSubmit) {
             e.preventDefault()
             onSubmit()
+          } else if (e.key === 'Escape') {
+            e.preventDefault()
+            onCancel()
           }
         }}
       />
@@ -642,6 +669,7 @@ function PRReviewLoaded({
    */
   type Editing = { comment: LineComment; isNew: boolean }
   const [editingComments, setEditingComments] = useState<Map<string, Editing>>(new Map())
+  const codeViewRef = useRef<CodeViewHandle<AnnotationMeta>>(null)
 
   const startDraft = (spec: {
     path: string
@@ -718,6 +746,7 @@ function PRReviewLoaded({
       next.delete(id)
       return next
     })
+    codeViewRef.current?.clearSelectedLines()
   }
 
   const cancelEdit = (id: string) => {
@@ -726,6 +755,7 @@ function PRReviewLoaded({
       next.delete(id)
       return next
     })
+    codeViewRef.current?.clearSelectedLines()
   }
 
   const removeFromPending = (id: string) => {
@@ -991,6 +1021,7 @@ function PRReviewLoaded({
           )}
           {codeViewItems.length > 0 ? (
             <CodeView<AnnotationMeta>
+              ref={codeViewRef}
               className={CODE_VIEW_CLASS}
               items={codeViewItems}
               renderHeaderPrefix={renderHeaderPrefix}
@@ -1518,6 +1549,7 @@ function LoadedView({
   const [pending, setPending] = useState<PendingReview | null>(null)
   type Editing = { comment: LineComment; isNew: boolean }
   const [editingComments, setEditingComments] = useState<Map<string, Editing>>(new Map())
+  const codeViewRef = useRef<CodeViewHandle<AnnotationMeta>>(null)
 
   useEffect(() => {
     window.api.reviewGet(target).then(setPending)
@@ -1730,6 +1762,7 @@ function LoadedView({
       next.delete(id)
       return next
     })
+    codeViewRef.current?.clearSelectedLines()
   }
 
   const cancelEdit = (id: string) => {
@@ -1738,6 +1771,7 @@ function LoadedView({
       next.delete(id)
       return next
     })
+    codeViewRef.current?.clearSelectedLines()
   }
 
   const removeFromPending = (id: string) => {
@@ -1848,6 +1882,7 @@ function LoadedView({
           >
             {codeViewItems.length > 0 ? (
               <CodeView<AnnotationMeta>
+                ref={codeViewRef}
                 className={CODE_VIEW_CLASS}
                 items={codeViewItems}
                 renderHeaderPrefix={renderHeaderPrefix}
