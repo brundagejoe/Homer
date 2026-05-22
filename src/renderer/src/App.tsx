@@ -46,7 +46,7 @@ export default function App() {
   }, [])
 
   if (!window.api) {
-    return <main style={shellStyle}><header style={statusBarStyle}>window.api is undefined</header></main>
+    return <main style={shellStyle}><header className="titlebar-drag" style={statusBarStyle}>window.api is undefined</header></main>
   }
 
   const view = (() => {
@@ -79,7 +79,7 @@ const SHORTCUT_HELP: ShortcutHelp[] = [
 function FatalError({ msg }: { msg: string }) {
   return (
     <main style={shellStyle}>
-      <header style={statusBarStyle}>{msg}</header>
+      <header className="titlebar-drag" style={statusBarStyle}>{msg}</header>
     </main>
   )
 }
@@ -112,7 +112,7 @@ function LocalRoot() {
   if (status.type !== 'loaded') {
     return (
       <main style={shellStyle}>
-        <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+        <header className="titlebar-drag" style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
           <span style={{ flex: 1 }}>
             {status.type === 'loading' && 'Loading…'}
             {status.type === 'empty' && `${status.repo} — no changes for this source`}
@@ -254,7 +254,7 @@ function PRReviewView({ target }: { target: PrTarget }) {
   if (status.type !== 'loaded') {
     return (
       <main style={shellStyle}>
-        <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between' }}>
+        <header className="titlebar-drag" style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between' }}>
           <span>
             {target.owner}/{target.repo}#{target.number}
             {status.type === 'loading' && ' — loading…'}
@@ -453,7 +453,7 @@ function PRReviewLoaded({
 
   return (
     <main style={shellStyle}>
-      <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+      <header className="titlebar-drag" style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
         <span style={{ flex: 1 }}>
           <span style={{ fontWeight: 600 }}>
             {target.owner}/{target.repo}#{pr.number}
@@ -471,7 +471,7 @@ function PRReviewLoaded({
             <span style={{ marginLeft: '0.5rem', color: '#2a8b3a' }}>· review submitted</span>
           )}
         </span>
-        {!pending && <button onClick={startReview}>Start review</button>}
+        {!pending && <button className="primary" onClick={startReview}>Start review</button>}
         <StateBadge state={pr.state} />
         <GhAuthIndicator />
       </header>
@@ -479,7 +479,7 @@ function PRReviewLoaded({
         <aside style={treePaneStyle}>
           <FileTree model={model} />
         </aside>
-        <section style={{ flex: 1, overflow: 'auto' }}>
+        <section className="diff-host" style={{ flex: 1, overflow: 'auto' }}>
           {pr.body && (
             <details open style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #eee' }}>
               <summary style={{ cursor: 'pointer', color: '#555', fontSize: '0.85rem' }}>Description</summary>
@@ -673,7 +673,12 @@ function PRReviewPanel({
       )}
 
       <div style={{ display: 'flex', gap: '0.5rem' }}>
-        <button onClick={onSubmit} disabled={submitState.kind === 'submitting'} style={{ flex: 1 }}>
+        <button
+          className="primary"
+          onClick={onSubmit}
+          disabled={submitState.kind === 'submitting'}
+          style={{ flex: 1 }}
+        >
           {submitState.kind === 'submitting' ? 'Submitting…' : 'Submit review'}
         </button>
         <button onClick={onDiscard}>Discard</button>
@@ -683,21 +688,22 @@ function PRReviewPanel({
 }
 
 const inlineAnnotationStyle: React.CSSProperties = {
-  background: '#fff8c5',
-  border: '1px solid #d4a72c',
-  borderRadius: 4,
-  padding: '0.4rem 0.6rem',
-  margin: '0.25rem 0.5rem'
+  background: 'rgba(255, 224, 138, 0.55)',
+  border: '1px solid rgba(217, 154, 0, 0.35)',
+  borderRadius: 6,
+  padding: '0.45rem 0.6rem',
+  margin: '0.25rem 0.5rem',
+  fontSize: '12.5px'
 }
 
 const conversationPaneStyle: React.CSSProperties = {
   width: 320,
-  borderLeft: '1px solid #eee',
-  padding: '0.75rem',
+  borderLeft: '1px solid var(--hairline)',
+  padding: '0.85rem 0.9rem',
   display: 'flex',
   flexDirection: 'column',
   gap: '0.5rem',
-  background: '#fafafa',
+  background: 'var(--bg-sidebar)',
   flexShrink: 0,
   overflow: 'hidden'
 }
@@ -749,7 +755,7 @@ function InboxView() {
 
   return (
     <main style={shellStyle}>
-      <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+      <header className="titlebar-drag" style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
         <span style={{ flex: 1 }}>
           PR Inbox
           {lastFetched && (
@@ -804,14 +810,14 @@ function InboxView() {
 
 function InboxSection({ title, prs }: { title: string; prs: PullRequestSummary[] }) {
   return (
-    <div style={{ marginBottom: '1.5rem' }}>
-      <h3 style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: '#666', margin: '0 0 0.5rem' }}>
-        {title} <span style={{ color: '#aaa' }}>({prs.length})</span>
-      </h3>
+    <div style={{ marginBottom: '1.25rem' }}>
+      <div className="section-label" style={{ padding: '0 0.25rem 0.35rem' }}>
+        {title} <span style={{ color: 'var(--fg-tertiary)', fontWeight: 400 }}>· {prs.length}</span>
+      </div>
       {prs.length === 0 ? (
-        <div style={{ color: '#888', fontSize: '0.85rem' }}>None.</div>
+        <div style={{ color: 'var(--fg-tertiary)', fontSize: 12.5, padding: '0.2rem 0.7rem' }}>None.</div>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
           {prs.map(pr => (
             <li key={pr.id}>
               <PrRow pr={pr} />
@@ -829,31 +835,18 @@ function PrRow({ pr }: { pr: PullRequestSummary }) {
     window.api.openPRReview({ owner, repo, number: pr.number })
   }
   return (
-    <button
-      onClick={onClick}
-      style={{
-        textAlign: 'left',
-        width: '100%',
-        padding: '0.5rem 0.6rem',
-        border: '1px solid #eee',
-        borderRadius: 4,
-        background: '#fff',
-        cursor: 'pointer',
-        display: 'grid',
-        gridTemplateColumns: '1fr auto',
-        gap: '0.5rem',
-        fontSize: '0.85rem'
-      }}
-    >
-      <span>
-        <span style={{ fontWeight: 600 }}>{pr.title}</span>
-        <span style={{ color: '#888', marginLeft: '0.5rem' }}>
+    <button className="row" onClick={onClick}>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontWeight: 500 }}>{pr.title}</span>
+        <span style={{ color: 'var(--fg-tertiary)', marginLeft: '0.5rem' }}>
           {pr.repo} #{pr.number} · {pr.author}
         </span>
       </span>
       <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
         <StateBadge state={pr.state} />
-        {pr.commentCount > 0 && <span style={{ color: '#888' }}>💬 {pr.commentCount}</span>}
+        {pr.commentCount > 0 && (
+          <span style={{ color: 'var(--fg-tertiary)', fontSize: 11 }}>💬 {pr.commentCount}</span>
+        )}
       </span>
     </button>
   )
@@ -861,22 +854,13 @@ function PrRow({ pr }: { pr: PullRequestSummary }) {
 
 function StateBadge({ state }: { state: PullRequestSummary['state'] }) {
   const colors: Record<PullRequestSummary['state'], string> = {
-    open: '#2a8b3a',
-    draft: '#666',
-    merged: '#6f42c1',
-    closed: '#b00020'
+    open: 'var(--success)',
+    draft: 'var(--fg-secondary)',
+    merged: '#a371f7',
+    closed: 'var(--danger)'
   }
   return (
-    <span
-      style={{
-        fontSize: '0.7rem',
-        textTransform: 'uppercase',
-        color: colors[state],
-        border: `1px solid ${colors[state]}`,
-        padding: '0.05rem 0.4rem',
-        borderRadius: 999
-      }}
-    >
+    <span className="pill" style={{ color: colors[state], textTransform: 'uppercase', fontSize: 10, letterSpacing: 0.04 }}>
       {state}
     </span>
   )
@@ -949,12 +933,13 @@ function GhAuthIndicator() {
 
 function ghPillStyle(color: string): React.CSSProperties {
   return {
-    fontSize: '0.75rem',
+    fontSize: 11,
     color,
     border: `1px solid ${color}`,
-    padding: '0.1rem 0.5rem',
+    padding: '1px 8px',
     borderRadius: 999,
-    cursor: 'help'
+    cursor: 'help',
+    whiteSpace: 'nowrap'
   }
 }
 
@@ -1085,7 +1070,7 @@ function LoadedView({
 
   return (
     <main style={shellStyle}>
-      <header style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+      <header className="titlebar-drag" style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
         <span style={{ flex: 1 }}>
           {repo} ({files.length} file{files.length === 1 ? '' : 's'})
           {pending && (
@@ -1096,14 +1081,14 @@ function LoadedView({
           )}
         </span>
         {sourcePicker}
-        {!pending && <button onClick={startReview}>Start review</button>}
+        {!pending && <button className="primary" onClick={startReview}>Start review</button>}
         <GhAuthIndicator />
       </header>
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <aside style={treePaneStyle}>
           <FileTree model={model} />
         </aside>
-        <section style={{ flex: 1, overflow: 'auto' }}>
+        <section className="diff-host" style={{ flex: 1, overflow: 'auto' }}>
           {selectedFile && selectedFile.patch ? (
             <PatchDiff patch={selectedFile.patch} />
           ) : (
@@ -1212,7 +1197,7 @@ function ReviewPanel({
       </label>
 
       <div style={{ display: 'flex', gap: '0.5rem' }}>
-        <button onClick={onSubmit} style={{ flex: 1 }}>
+        <button className="primary" onClick={onSubmit} style={{ flex: 1 }}>
           Submit to Agent (copy)
         </button>
         <button onClick={onRefresh} title="Re-snapshot the diff">↻</button>
@@ -1223,47 +1208,54 @@ function ReviewPanel({
 }
 
 const shellStyle: React.CSSProperties = {
-  fontFamily: 'system-ui',
   height: '100vh',
   display: 'flex',
-  flexDirection: 'column'
+  flexDirection: 'column',
+  background: 'var(--bg)'
 }
 
+// Header doubles as the draggable title-bar region. 78px left padding leaves
+// room for inset traffic lights on macOS.
 const statusBarStyle: React.CSSProperties = {
-  padding: '0.5rem 1rem',
-  borderBottom: '1px solid #eee',
-  fontSize: '0.85rem',
-  color: '#555',
+  padding: '0.5rem 1rem 0.5rem 78px',
+  borderBottom: '1px solid var(--hairline)',
+  fontSize: '12.5px',
+  color: 'var(--fg-secondary)',
   flexShrink: 0,
-  alignItems: 'center'
+  alignItems: 'center',
+  background: 'var(--bg)',
+  height: 38,
+  minHeight: 38,
+  boxSizing: 'border-box'
 }
 
 const treePaneStyle: React.CSSProperties = {
-  width: 260,
-  borderRight: '1px solid #eee',
+  width: 240,
+  borderRight: '1px solid var(--hairline)',
   overflow: 'auto',
-  background: '#fafafa',
-  flexShrink: 0
+  background: 'var(--bg-sidebar)',
+  flexShrink: 0,
+  padding: '0.4rem 0'
 }
 
 const reviewPaneStyle: React.CSSProperties = {
   width: 360,
-  borderLeft: '1px solid #eee',
-  padding: '0.75rem',
+  borderLeft: '1px solid var(--hairline)',
+  padding: '0.85rem 0.9rem',
   display: 'flex',
   flexDirection: 'column',
   gap: '0.75rem',
-  background: '#fafafa',
+  background: 'var(--bg-sidebar)',
   flexShrink: 0,
   overflow: 'hidden'
 }
 
 const commentCardStyle: React.CSSProperties = {
-  border: '1px solid #ddd',
-  borderRadius: 4,
-  padding: '0.5rem',
+  border: '1px solid var(--hairline)',
+  borderRadius: 8,
+  padding: '0.55rem 0.6rem',
   display: 'flex',
   flexDirection: 'column',
   gap: '0.4rem',
-  background: '#fff'
+  background: 'var(--bg-elevated)'
 }

@@ -92,6 +92,9 @@ function openWindow(target: LaunchTarget): void {
     show: false,
     autoHideMenuBar: true,
     title,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 14, y: 14 },
+    backgroundColor: '#ffffff',
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
