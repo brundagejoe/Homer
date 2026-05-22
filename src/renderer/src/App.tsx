@@ -443,6 +443,7 @@ function PRReviewLoaded({
     }
     setPending(review)
     window.api.reviewUpsert(review)
+    setReviewPanelOpen(true)
   }
 
   const updatePending = (next: PendingReview) => {
@@ -575,7 +576,11 @@ function PRReviewLoaded({
     allowInForm: true,
     handler: e => {
       e.preventDefault()
-      setReviewPanelOpen(v => !v)
+      if (!pending) {
+        startReview()
+      } else {
+        setReviewPanelOpen(v => !v)
+      }
     }
   })
 
@@ -1327,6 +1332,7 @@ function LoadedView({
     }
     setPending(review)
     window.api.reviewUpsert(review)
+    setReviewPanelOpen(true)
   }
 
   const refreshSnapshot = async () => {
@@ -1432,7 +1438,11 @@ function LoadedView({
     allowInForm: true,
     handler: e => {
       e.preventDefault()
-      setReviewPanelOpen(v => !v)
+      if (!pending) {
+        startReview()
+      } else {
+        setReviewPanelOpen(v => !v)
+      }
     }
   })
 
