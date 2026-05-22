@@ -663,7 +663,7 @@ function PRReviewLoaded({
         <ResizablePanel defaultSize="60%" minSize="30%" className="overflow-hidden">
         <section
           ref={diffSectionRef}
-          className="diff-host w-full h-full overflow-auto"
+          className="diff-host w-full h-full flex flex-col"
         >
           {pr.body && (
             <details open className="px-4 py-2 border-b border-hairline shrink-0 bg-surface">
@@ -677,6 +677,7 @@ function PRReviewLoaded({
           )}
           {codeViewItems.length > 0 ? (
             <CodeView
+              className="flex-1 min-h-0 overflow-auto"
               items={codeViewItems}
               renderHeaderPrefix={renderHeaderPrefix}
               renderAnnotation={(ann) => {
@@ -1378,10 +1379,11 @@ function LoadedView({
         <ResizablePanel defaultSize={pending ? '55%' : '80%'} minSize="30%" className="overflow-hidden">
           <section
             ref={diffSectionRef}
-            className="diff-host w-full h-full overflow-auto"
+            className="diff-host w-full h-full flex flex-col"
           >
             {codeViewItems.length > 0 ? (
               <CodeView
+                className="flex-1 min-h-0 overflow-auto"
                 items={codeViewItems}
                 renderHeaderPrefix={renderHeaderPrefix}
               />
