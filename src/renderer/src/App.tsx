@@ -103,15 +103,19 @@ function buildCodeViewItems<T>(
     const fileDiff = processFile(f.patch)
     if (!fileDiff) continue
     const collapsed = collapsedPaths?.has(f.path) ?? false
+    const annotations = annotationsFor?.(f.path)
     items.push({
       id: f.path,
       type: 'diff',
       fileDiff,
-      annotations: annotationsFor?.(f.path),
+      annotations,
       collapsed,
-      // Pierre uses `version` to detect item changes; bumping it when
-      // collapse state changes forces a re-render of that file's body.
-      version: collapsed ? 1 : 0
+      // Pierre keeps a cached snapshot per item and re-syncs only when
+      // `version` changes (see syncItemRecord in @pierre/diffs). It
+      // must change whenever collapse state OR the annotation list
+      // changes — otherwise newly-added pending comments silently get
+      // swallowed by the cached snapshot.
+      version: (collapsed ? 1 : 0) + (annotations?.length ?? 0) * 2
     })
   }
   return items
