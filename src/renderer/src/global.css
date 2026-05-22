@@ -154,6 +154,11 @@ a {
 
   background: var(--bg);
   height: 100%;
+  /* Trailing space below the last file. Lives on the scroll container,
+     not on the last child's margin-bottom — overflow containers don't
+     reliably include a child's trailing margin in scrollHeight, which
+     made the last hunk feel cut off. */
+  padding-bottom: 24px;
 }
 
 /* Each file is its own card with a clear border so file boundaries pop. */
@@ -166,10 +171,6 @@ a {
   /* `clip` keeps rounded corners while still letting position: sticky work
      on descendants (overflow: hidden would clip the sticky header). */
   overflow: clip;
-}
-
-.diff-host diffs-container:last-of-type {
-  margin-bottom: 24px;
 }
 
 /* The file header sits flush at the top of each card. Sticky against the
