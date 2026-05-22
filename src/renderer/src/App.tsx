@@ -2,7 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { CodeView } from '@pierre/diffs/react'
 import { processFile } from '@pierre/diffs'
-import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs'
+import type { CodeViewDiffItem, CodeViewOptions, DiffLineAnnotation } from '@pierre/diffs'
+
+/**
+ * Pierre's CodeView layout — only paddingBottom is tuned. Pierre uses
+ * this as a margin-bottom on its internal container; the scroll bottoms
+ * out at the last file plus this much breathing room.
+ */
+const CODE_VIEW_OPTIONS: CodeViewOptions<unknown> = {
+  layout: { paddingTop: 8, paddingBottom: 32, gap: 8 }
+}
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
@@ -678,6 +687,7 @@ function PRReviewLoaded({
           {codeViewItems.length > 0 ? (
             <CodeView
               className="flex-1 min-h-0 overflow-auto"
+              options={CODE_VIEW_OPTIONS as CodeViewOptions<InlineComment>}
               items={codeViewItems}
               renderHeaderPrefix={renderHeaderPrefix}
               renderAnnotation={(ann) => {
@@ -1384,6 +1394,7 @@ function LoadedView({
             {codeViewItems.length > 0 ? (
               <CodeView
                 className="flex-1 min-h-0 overflow-auto"
+                options={CODE_VIEW_OPTIONS}
                 items={codeViewItems}
                 renderHeaderPrefix={renderHeaderPrefix}
               />
