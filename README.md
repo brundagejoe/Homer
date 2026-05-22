@@ -29,11 +29,25 @@ A Pending Review is a batched draft — all comments go out together, just like 
 - React + TypeScript
 - [Bun](https://bun.sh) as the package manager
 - [`@pierre/diffs`](https://diffs.com) and [`@pierre/trees`](https://trees.software) for rendering
-- [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3) for Pending Review persistence
+- Tailwind v4 + shadcn components on [Base UI](https://base-ui.com) primitives (Tooltip, Toast, AlertDialog)
+- JSON-file persistence under `userData/` for pending reviews and window state
 - [`@octokit/rest`](https://github.com/octokit/rest.js) for the GitHub API
 - Shell out to `git` for local operations
 - `gh` CLI for auth (the app delegates and surfaces an explicit status)
 
+## Run it
+
+```sh
+bun install
+bun run build
+bin/dv                                 # local mode for $PWD
+bin/dv /path/to/repo                   # local mode for that path
+bin/dv https://github.com/o/r/pull/N   # PR review window
+bin/dv-inbox                           # PR Inbox window
+```
+
+For development: `bun run dev` (electron-vite dev server with hot reload).
+
 ## Status
 
-Pre-V0. Design is locked; implementation has not started.
+V0 shipped. Inbox, PR Review, and Local Mode are all functional; pending reviews persist; window bounds and panel layouts survive across launches.
