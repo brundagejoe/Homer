@@ -6,6 +6,13 @@ import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
 import { Markdown } from './Markdown'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle
+} from '@/components/ui/resizable'
 import type {
   AuthStatus,
   ConversationComment,
@@ -29,6 +36,31 @@ type Status =
   | { type: 'error'; message: string }
 
 const DEFAULT_SOURCE: DiffSourceSpec = { type: 'working-tree-vs-head' }
+
+/**
+ * Produces a Pierre Tree sort comparator that orders entries by their
+ * first-appearance index in `paths`. Directories use the minimum index
+ * of any descendant file, so folders are visited in the order of their
+ * first changed file.
+ */
+function useDiffOrderSort(paths: readonly string[]) {
+  return useMemo(() => {
+    const order = new Map<string, number>()
+    paths.forEach((p, i) => {
+      order.set(p, i)
+      const parts = p.split('/')
+      for (let d = 1; d < parts.length; d++) {
+        const dir = parts.slice(0, d).join('/')
+        if (!order.has(dir)) order.set(dir, i)
+      }
+    })
+    return (a: { path: string }, b: { path: string }) => {
+      const ai = order.get(a.path) ?? Number.MAX_SAFE_INTEGER
+      const bi = order.get(b.path) ?? Number.MAX_SAFE_INTEGER
+      return ai - bi
+    }
+  }, [paths])
+}
 
 type Annotator<T> = (path: string) => DiffLineAnnotation<T>[] | undefined
 
@@ -374,8 +406,10 @@ function PRReviewLoaded({
   }, [reviewTarget])
 
   const paths = useMemo(() => files.map(f => f.path), [files])
+  const sortByDiffOrder = useDiffOrderSort(paths)
   const { model } = useFileTree({
     paths,
+    sort: sortByDiffOrder,
     initialExpansion: 'open',
     initialSelectedPaths: paths.length > 0 ? [paths[0]] : []
   })
@@ -598,14 +632,18 @@ function PRReviewLoaded({
         <GhAuthIndicator />
         <HelpButton />
       </header>
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <aside style={treePaneStyle}>
-          <FileTree model={model} />
-        </aside>
+      <ResizablePanelGroup orientation="horizontal" id="pr-review-panes" className="flex-1 min-h-0">
+        <ResizablePanel defaultSize="18%" minSize="10%" maxSize="40%" className="overflow-hidden">
+          <aside style={treePaneStyle}>
+            <FileTree model={model} />
+          </aside>
+        </ResizablePanel>
+        <ResizableHandle />
+        <ResizablePanel defaultSize="60%" minSize="30%" className="overflow-hidden">
         <section
           ref={diffSectionRef}
           className="diff-host"
-          style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}
+          style={{ width: '100%', height: '100%', overflow: 'auto' }}
         >
           {pr.body && (
             <details
@@ -649,21 +687,30 @@ function PRReviewLoaded({
             </div>
           )}
         </section>
+        </ResizablePanel>
         {pending && (
-          <PRReviewPanel
-            pending={pending}
-            selectedPath={selectedPath}
-            submitState={submitState}
-            onAddComment={() => addComment(selectedPath)}
-            onEditComment={editComment}
-            onRemoveComment={removeComment}
-            onSummary={setSummary}
-            onEvent={setEvent}
-            onSubmit={submit}
-            onDiscard={discard}
-          />
+          <>
+            <ResizableHandle />
+            <ResizablePanel defaultSize="22%" minSize="15%" maxSize="45%" className="overflow-hidden">
+              <PRReviewPanel
+                pending={pending}
+                selectedPath={selectedPath}
+                submitState={submitState}
+                onAddComment={() => addComment(selectedPath)}
+                onEditComment={editComment}
+                onRemoveComment={removeComment}
+                onSummary={setSummary}
+                onEvent={setEvent}
+                onSubmit={submit}
+                onDiscard={discard}
+              />
+            </ResizablePanel>
+          </>
         )}
         {conversationOpen && (
+        <>
+        <ResizableHandle />
+        <ResizablePanel defaultSize="20%" minSize="15%" maxSize="40%" className="overflow-hidden">
         <aside style={conversationPaneStyle}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Conversation</h3>
@@ -729,8 +776,10 @@ function PRReviewLoaded({
             })}
           </div>
         </aside>
+        </ResizablePanel>
+        </>
         )}
-      </div>
+      </ResizablePanelGroup>
     </main>
   )
 }
@@ -857,14 +906,13 @@ const inlineAnnotationStyle: React.CSSProperties = {
 }
 
 const conversationPaneStyle: React.CSSProperties = {
-  width: 320,
-  borderLeft: '1px solid var(--hairline)',
+  width: '100%',
+  height: '100%',
   padding: '0.85rem 0.9rem',
   display: 'flex',
   flexDirection: 'column',
   gap: '0.5rem',
   background: 'var(--bg-sidebar)',
-  flexShrink: 0,
   overflow: 'hidden'
 }
 
@@ -924,7 +972,7 @@ function InboxView() {
             </span>
           )}
         </span>
-        <button onClick={load}>Refresh</button>
+        <Button onClick={load}>Refresh</Button>
         <GhAuthIndicator />
       </header>
       <section style={{ flex: 1, overflow: 'auto', padding: '0.75rem 1rem' }}>
@@ -947,9 +995,9 @@ function InboxView() {
             value={urlInput}
             onChange={e => setUrlInput(e.target.value)}
             placeholder="Paste a GitHub PR URL…"
-            style={{ flex: 1, padding: '0.35rem 0.5rem', fontSize: '0.85rem' }}
+            className="flex-1 px-2 py-1 text-[12.5px]"
           />
-          <button type="submit">Open</button>
+          <Button type="submit" variant="primary">Open</Button>
         </form>
         {urlError && <div style={{ color: '#b00020', fontSize: '0.8rem', marginBottom: '0.5rem' }}>{urlError}</div>}
         {status.type === 'loading' && <div style={{ color: '#888' }}>Loading…</div>}
@@ -995,35 +1043,36 @@ function PrRow({ pr }: { pr: PullRequestSummary }) {
     window.api.openPRReview({ owner, repo, number: pr.number })
   }
   return (
-    <button className="row" onClick={onClick}>
-      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        <span style={{ fontWeight: 500 }}>{pr.title}</span>
-        <span style={{ color: 'var(--fg-tertiary)', marginLeft: '0.5rem' }}>
+    <button
+      onClick={onClick}
+      className="grid grid-cols-[1fr_auto] items-center gap-2.5 w-full px-2.5 py-1.5 text-left text-[12.5px] text-fg rounded-[7px] hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 cursor-pointer [-webkit-app-region:no-drag]"
+    >
+      <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+        <span className="font-medium">{pr.title}</span>
+        <span className="text-subtle ml-2">
           {pr.repo} #{pr.number} · {pr.author}
         </span>
       </span>
-      <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-        <StateBadge state={pr.state} />
+      <span className="flex items-center gap-2">
         {pr.commentCount > 0 && (
-          <span style={{ color: 'var(--fg-tertiary)', fontSize: 11 }}>💬 {pr.commentCount}</span>
+          <span className="text-subtle text-[11px]">💬 {pr.commentCount}</span>
         )}
+        <StateBadge state={pr.state} />
       </span>
     </button>
   )
 }
 
 function StateBadge({ state }: { state: PullRequestSummary['state'] }) {
-  const colors: Record<PullRequestSummary['state'], string> = {
-    open: 'var(--success)',
-    draft: 'var(--fg-secondary)',
-    merged: '#a371f7',
-    closed: 'var(--danger)'
-  }
-  return (
-    <span className="pill" style={{ color: colors[state], textTransform: 'uppercase', fontSize: 10, letterSpacing: 0.04 }}>
-      {state}
-    </span>
-  )
+  const tone = (
+    {
+      open: 'success',
+      draft: 'neutral',
+      merged: 'purple',
+      closed: 'danger'
+    } as const
+  )[state]
+  return <Badge tone={tone}>{state}</Badge>
 }
 
 const HELP_EVENT = 'dv:show-help'
@@ -1131,9 +1180,11 @@ function LoadedView({
     [files]
   )
 
+  const sortByDiffOrder = useDiffOrderSort(paths)
   const { model } = useFileTree({
     paths,
     gitStatus,
+    sort: sortByDiffOrder,
     initialExpansion: 'open',
     initialSelectedPaths: paths.length > 0 ? [paths[0]] : []
   })
@@ -1288,42 +1339,52 @@ function LoadedView({
         {!pending && <button className="primary" onClick={startReview}>Start review</button>}
         <GhAuthIndicator />
       </header>
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <aside style={treePaneStyle}>
-          <FileTree model={model} />
-        </aside>
-        <section
-          ref={diffSectionRef}
-          className="diff-host"
-          style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}
-        >
-          {codeViewItems.length > 0 ? (
-            <CodeView
-              items={codeViewItems}
-              renderHeaderPrefix={renderHeaderPrefix}
-            />
-          ) : (
-            <div style={{ padding: '1rem', color: 'var(--fg-tertiary)' }}>
-              {selectedFile?.isBinary
-                ? 'Binary file — no diff preview'
-                : 'No diff to display'}
-            </div>
-          )}
-        </section>
+      <ResizablePanelGroup orientation="horizontal" id="local-panes" className="flex-1 min-h-0">
+        <ResizablePanel defaultSize="20%" minSize="10%" maxSize="40%" className="overflow-hidden">
+          <aside style={treePaneStyle}>
+            <FileTree model={model} />
+          </aside>
+        </ResizablePanel>
+        <ResizableHandle />
+        <ResizablePanel defaultSize={pending ? '55%' : '80%'} minSize="30%" className="overflow-hidden">
+          <section
+            ref={diffSectionRef}
+            className="diff-host"
+            style={{ width: '100%', height: '100%', overflow: 'auto' }}
+          >
+            {codeViewItems.length > 0 ? (
+              <CodeView
+                items={codeViewItems}
+                renderHeaderPrefix={renderHeaderPrefix}
+              />
+            ) : (
+              <div style={{ padding: '1rem', color: 'var(--fg-tertiary)' }}>
+                {selectedFile?.isBinary
+                  ? 'Binary file — no diff preview'
+                  : 'No diff to display'}
+              </div>
+            )}
+          </section>
+        </ResizablePanel>
         {pending && (
-          <ReviewPanel
-            pending={pending}
-            selectedPath={selectedPath}
-            onAddComment={() => addComment(selectedPath)}
-            onRemoveComment={removeComment}
-            onEditComment={editComment}
-            onSummaryChange={updateSummary}
-            onRefresh={refreshSnapshot}
-            onSubmit={submitToAgent}
-            onDiscard={discardReview}
-          />
+          <>
+            <ResizableHandle />
+            <ResizablePanel defaultSize="25%" minSize="15%" maxSize="45%" className="overflow-hidden">
+              <ReviewPanel
+                pending={pending}
+                selectedPath={selectedPath}
+                onAddComment={() => addComment(selectedPath)}
+                onRemoveComment={removeComment}
+                onEditComment={editComment}
+                onSummaryChange={updateSummary}
+                onRefresh={refreshSnapshot}
+                onSubmit={submitToAgent}
+                onDiscard={discardReview}
+              />
+            </ResizablePanel>
+          </>
         )}
-      </div>
+      </ResizablePanelGroup>
     </main>
   )
 }
@@ -1441,23 +1502,21 @@ const statusBarStyle: React.CSSProperties = {
 }
 
 const treePaneStyle: React.CSSProperties = {
-  width: 240,
-  borderRight: '1px solid var(--hairline)',
+  width: '100%',
+  height: '100%',
   overflow: 'auto',
   background: 'var(--bg-sidebar)',
-  flexShrink: 0,
   padding: '0.4rem 0'
 }
 
 const reviewPaneStyle: React.CSSProperties = {
-  width: 360,
-  borderLeft: '1px solid var(--hairline)',
+  width: '100%',
+  height: '100%',
   padding: '0.85rem 0.9rem',
   display: 'flex',
   flexDirection: 'column',
   gap: '0.75rem',
   background: 'var(--bg-sidebar)',
-  flexShrink: 0,
   overflow: 'hidden'
 }
 

@@ -1,38 +1,62 @@
-:root {
-  /* macOS-style design tokens. */
-  --bg: #ffffff;
-  --bg-sidebar: #f7f7f7;
-  --bg-elevated: #ffffff;
-  --bg-hover: rgba(0, 0, 0, 0.05);
-  --bg-active: rgba(0, 0, 0, 0.08);
-  --bg-selected: rgba(0, 122, 255, 0.12);
-  --fg: rgba(0, 0, 0, 0.92);
-  --fg-secondary: rgba(0, 0, 0, 0.6);
-  --fg-tertiary: rgba(0, 0, 0, 0.42);
-  --hairline: rgba(0, 0, 0, 0.08);
-  --hairline-strong: rgba(0, 0, 0, 0.14);
-  --accent: #007aff;
-  --accent-hover: #1a8aff;
-  --accent-active: #0062cc;
-  --danger: #ff3b30;
-  --warning: #ff9500;
-  --success: #34c759;
+@import 'tailwindcss';
+
+@theme {
+  --color-surface: #ffffff;
+  --color-sidebar: #f7f7f7;
+  --color-elevated: #ffffff;
+  --color-hover: rgba(0, 0, 0, 0.05);
+  --color-active: rgba(0, 0, 0, 0.08);
+  --color-selected: rgba(0, 122, 255, 0.12);
+  --color-fg: rgba(0, 0, 0, 0.92);
+  --color-muted: rgba(0, 0, 0, 0.6);
+  --color-subtle: rgba(0, 0, 0, 0.42);
+  --color-hairline: rgba(0, 0, 0, 0.08);
+  --color-hairline-strong: rgba(0, 0, 0, 0.14);
+  --color-accent: #007aff;
+  --color-accent-hover: #1a8aff;
+  --color-accent-active: #0062cc;
+  --color-danger: #ff3b30;
+  --color-warning: #ff9500;
+  --color-success: #34c759;
   --radius-sm: 5px;
   --radius-md: 7px;
   --radius-lg: 10px;
 
-  font-family:
-    -apple-system,
-    'SF Pro Text',
-    'SF Pro Display',
-    system-ui,
-    'Helvetica Neue',
+  --font-sans:
+    -apple-system, 'SF Pro Text', 'SF Pro Display', system-ui, 'Helvetica Neue',
     sans-serif;
+  --font-mono:
+    ui-monospace, 'SF Mono', Menlo, Monaco, 'JetBrains Mono', 'Cascadia Mono',
+    Consolas, monospace;
+}
+
+:root {
+  /* Legacy var aliases — existing inline styles use these.
+     Will be removed once everything is migrated to Tailwind. */
+  --bg: var(--color-surface);
+  --bg-sidebar: var(--color-sidebar);
+  --bg-elevated: var(--color-elevated);
+  --bg-hover: var(--color-hover);
+  --bg-active: var(--color-active);
+  --bg-selected: var(--color-selected);
+  --fg: var(--color-fg);
+  --fg-secondary: var(--color-muted);
+  --fg-tertiary: var(--color-subtle);
+  --hairline: var(--color-hairline);
+  --hairline-strong: var(--color-hairline-strong);
+  --accent: var(--color-accent);
+  --accent-hover: var(--color-accent-hover);
+  --accent-active: var(--color-accent-active);
+  --danger: var(--color-danger);
+  --warning: var(--color-warning);
+  --success: var(--color-success);
+
+  font-family: var(--font-sans);
   font-size: 13px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  color: var(--fg);
+  color: var(--color-fg);
 }
 
 @media (prefers-color-scheme: dark) {
