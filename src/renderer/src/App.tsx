@@ -167,44 +167,92 @@ function ExistingThreadAnnotation({
 }
 
 /**
- * Editable composer for a draft LineComment. Renders a textarea bound
- * to `comment.body` plus a small Remove button. Autofocuses when the
- * body is empty (i.e. just-created) so the user can start typing.
+ * Editing state for an inline draft comment. The body lives in React
+ * state (separate from the pending review on disk) so typing doesn't
+ * have to fight Pierre's snapshot cache, and Cancel for a new draft can
+ * abandon it cleanly without ever touching disk.
  */
-function PendingCommentAnnotation({
+function PendingCommentEditor({
   comment,
-  onEdit,
-  onRemove
+  onChange,
+  onSubmit,
+  onCancel
 }: {
   comment: LineComment
-  onEdit: (patch: Partial<LineComment>) => void
-  onRemove: () => void
+  onChange: (body: string) => void
+  onSubmit: () => void
+  onCancel: () => void
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const isReply = comment.inReplyToId != null
   useEffect(() => {
-    if (comment.body === '') ref.current?.focus()
-    // Only on mount — don't refocus on every edit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    ref.current?.focus()
   }, [])
+  const canSubmit = comment.body.trim().length > 0
   return (
-    <div className="border border-hairline-strong rounded-md bg-elevated px-2.5 py-2 mx-2 my-1 flex flex-col gap-1.5">
-      <div className="flex items-center justify-between text-[11px] text-muted">
-        <span>{isReply ? 'Your reply (pending)' : 'Your comment (pending)'}</span>
-        <Tooltip content="Discard">
-          <Button variant="ghost" size="icon" onClick={onRemove} aria-label="Discard">
-            ×
-          </Button>
-        </Tooltip>
+    <div className="border border-hairline-strong rounded-md bg-elevated px-2.5 py-2 mx-2 my-1 flex flex-col gap-2">
+      <div className="text-[11px] text-muted">
+        {isReply ? 'Your reply' : 'Your comment'}
       </div>
       <Textarea
         ref={ref}
         value={comment.body}
-        onChange={e => onEdit({ body: e.target.value })}
+        onChange={e => onChange(e.target.value)}
         rows={3}
         placeholder={isReply ? 'Write a reply…' : 'Write a comment…'}
         className="w-full text-[12.5px]"
+        onKeyDown={e => {
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSubmit) {
+            e.preventDefault()
+            onSubmit()
+          }
+        }}
       />
+      <div className="flex justify-end gap-2">
+        <Button size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button variant="primary" size="sm" onClick={onSubmit} disabled={!canSubmit}>
+          Add review comment
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Collapsed read-only view of a comment that's already been added to
+ * the pending review. Edit puts the comment back into editing state;
+ * Delete removes it from the pending review entirely.
+ */
+function PendingCommentCard({
+  comment,
+  onEdit,
+  onDelete
+}: {
+  comment: LineComment
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  const isReply = comment.inReplyToId != null
+  return (
+    <div className="border border-accent/40 bg-selected/60 rounded-md px-2.5 py-1.5 mx-2 my-1 flex flex-col gap-1 text-[12.5px]">
+      <div className="flex items-center justify-between text-[11px] text-muted">
+        <span>{isReply ? 'Your reply · pending review' : 'Your comment · pending review'}</span>
+        <div className="flex gap-1">
+          <Tooltip content="Edit">
+            <Button variant="ghost" size="icon" onClick={onEdit} aria-label="Edit comment">
+              ✎
+            </Button>
+          </Tooltip>
+          <Tooltip content="Delete">
+            <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Delete comment">
+              ×
+            </Button>
+          </Tooltip>
+        </div>
+      </div>
+      <Markdown compact>{comment.body}</Markdown>
     </div>
   )
 }
@@ -542,58 +590,107 @@ function PRReviewLoaded({
    * if one doesn't exist yet. Same entry point for fresh comments
    * (from the gutter `+`) and replies (from the existing-thread card).
    */
-  const appendPendingComment = (spec: {
+  /**
+   * Inline editing state. Lives in component state, NOT in the pending
+   * review on disk — drafts that the user cancels never get persisted,
+   * and edits to existing comments are buffered here until the user
+   * clicks Add review comment.
+   */
+  type Editing = { comment: LineComment; isNew: boolean }
+  const [editingComments, setEditingComments] = useState<Map<string, Editing>>(new Map())
+
+  const startDraft = (spec: {
     path: string
     lineNumber: number
     side: 'old' | 'new'
     inReplyToId?: number
   }) => {
-    const newComment: LineComment = {
-      id: crypto.randomUUID(),
+    const id = crypto.randomUUID()
+    const comment: LineComment = {
+      id,
       path: spec.path,
       lineNumber: spec.lineNumber,
       side: spec.side,
       body: '',
       ...(spec.inReplyToId != null ? { inReplyToId: spec.inReplyToId } : {})
     }
-    if (pending) {
-      updatePending({
-        ...pending,
-        lineComments: [...pending.lineComments, newComment],
-        updatedAt: Date.now()
-      })
-      return
-    }
-    const review: PendingReview = {
-      target: reviewTarget,
-      snapshot: { files: files.map(f => ({ ...f, status: 'modified', isBinary: false, oldPath: undefined })) },
-      lineComments: [newComment],
-      summary: '',
-      event: 'COMMENT',
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    }
-    setPending(review)
-    window.api.reviewUpsert(review)
+    setEditingComments(prev => new Map(prev).set(id, { comment, isNew: true }))
     setReviewPanelOpen(true)
   }
 
-  const editComment = (id: string, patch: Partial<LineComment>) => {
-    if (!pending) return
-    updatePending({
-      ...pending,
-      lineComments: pending.lineComments.map(c => (c.id === id ? { ...c, ...patch } : c)),
-      updatedAt: Date.now()
+  const startEdit = (commentId: string) => {
+    const existing = pending?.lineComments.find(c => c.id === commentId)
+    if (!existing) return
+    setEditingComments(prev =>
+      new Map(prev).set(commentId, { comment: { ...existing }, isNew: false })
+    )
+  }
+
+  const updateEditBody = (id: string, body: string) => {
+    setEditingComments(prev => {
+      const e = prev.get(id)
+      if (!e) return prev
+      const next = new Map(prev)
+      next.set(id, { ...e, comment: { ...e.comment, body } })
+      return next
     })
   }
 
-  const removeComment = (id: string) => {
+  const submitEdit = (id: string) => {
+    const edit = editingComments.get(id)
+    if (!edit) return
+    if (edit.isNew) {
+      if (pending) {
+        updatePending({
+          ...pending,
+          lineComments: [...pending.lineComments, edit.comment],
+          updatedAt: Date.now()
+        })
+      } else {
+        const review: PendingReview = {
+          target: reviewTarget,
+          snapshot: { files: files.map(f => ({ ...f, status: 'modified', isBinary: false, oldPath: undefined })) },
+          lineComments: [edit.comment],
+          summary: '',
+          event: 'COMMENT',
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+        setPending(review)
+        window.api.reviewUpsert(review)
+        setReviewPanelOpen(true)
+      }
+    } else {
+      if (!pending) return
+      updatePending({
+        ...pending,
+        lineComments: pending.lineComments.map(c => (c.id === id ? edit.comment : c)),
+        updatedAt: Date.now()
+      })
+    }
+    setEditingComments(prev => {
+      const next = new Map(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
+  const cancelEdit = (id: string) => {
+    setEditingComments(prev => {
+      const next = new Map(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
+  const removeFromPending = (id: string) => {
     if (!pending) return
     updatePending({
       ...pending,
       lineComments: pending.lineComments.filter(c => c.id !== id),
       updatedAt: Date.now()
     })
+    cancelEdit(id)
   }
 
   const setSummary = (summary: string) => {
@@ -702,8 +799,21 @@ function PRReviewLoaded({
         map.set(c.path, list)
       }
     }
+    // New drafts (not yet added to pending) also need an annotation slot
+    // so the editor can render at the right line.
+    for (const edit of editingComments.values()) {
+      if (!edit.isNew) continue
+      const c = edit.comment
+      const list = map.get(c.path) ?? []
+      list.push({
+        side: c.side === 'old' ? 'deletions' : 'additions',
+        lineNumber: c.lineNumber,
+        metadata: { kind: 'pending', comment: c }
+      })
+      map.set(c.path, list)
+    }
     return map
-  }, [inline, pending])
+  }, [inline, pending, editingComments])
 
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set())
 
@@ -833,7 +943,7 @@ function PRReviewLoaded({
               options={{
                 enableGutterUtility: true,
                 onGutterUtilityClick: (range, ctx) => {
-                  appendPendingComment({
+                  startDraft({
                     path: ctx.item.id,
                     lineNumber: range.start,
                     side: range.side === 'deletions' ? 'old' : 'new'
@@ -843,15 +953,18 @@ function PRReviewLoaded({
               renderAnnotation={ann => {
                 const meta = ann.metadata!
                 if (meta.kind === 'existing') {
-                  const hasReply = (pending?.lineComments ?? []).some(
-                    c => c.inReplyToId === meta.comment.id
-                  )
+                  const replyDraftId = meta.comment.id
+                  const hasReply =
+                    (pending?.lineComments ?? []).some(c => c.inReplyToId === replyDraftId) ||
+                    Array.from(editingComments.values()).some(
+                      e => e.isNew && e.comment.inReplyToId === replyDraftId
+                    )
                   return (
                     <ExistingThreadAnnotation
                       comment={meta.comment}
                       hasReply={hasReply}
                       onReply={() =>
-                        appendPendingComment({
+                        startDraft({
                           path: meta.comment.path,
                           lineNumber: meta.comment.lineNumber,
                           side: meta.comment.side === 'LEFT' ? 'old' : 'new',
@@ -861,11 +974,25 @@ function PRReviewLoaded({
                     />
                   )
                 }
+                const id = meta.comment.id
+                const editing = editingComments.get(id)
+                if (editing) {
+                  return (
+                    <PendingCommentEditor
+                      comment={editing.comment}
+                      onChange={body => updateEditBody(id, body)}
+                      onSubmit={() => submitEdit(id)}
+                      onCancel={() => cancelEdit(id)}
+                    />
+                  )
+                }
+                const submitted = pending?.lineComments.find(c => c.id === id)
+                if (!submitted) return null
                 return (
-                  <PendingCommentAnnotation
-                    comment={meta.comment}
-                    onEdit={patch => editComment(meta.comment.id, patch)}
-                    onRemove={() => removeComment(meta.comment.id)}
+                  <PendingCommentCard
+                    comment={submitted}
+                    onEdit={() => startEdit(id)}
+                    onDelete={() => removeFromPending(id)}
                   />
                 )
               }}
@@ -966,10 +1093,32 @@ function PRReviewPanel({
       <h3 className="m-0 text-[14px] font-semibold">Pending PR review</h3>
 
       <div className="text-[12px] text-muted">
-        {newCount} new {newCount === 1 ? 'comment' : 'comments'}
-        {replyCount > 0 && ` · ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}`}
-        {pending.lineComments.length === 0 && ' — click the + in the gutter to add one'}
+        {pending.lineComments.length === 0 ? (
+          'No comments yet — click the + in the gutter to add one'
+        ) : (
+          <>
+            {newCount} new {newCount === 1 ? 'comment' : 'comments'}
+            {replyCount > 0 && ` · ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}`}
+          </>
+        )}
       </div>
+
+      {pending.lineComments.length > 0 && (
+        <div className="overflow-auto flex flex-col gap-1.5 max-h-[40%] shrink-0">
+          {pending.lineComments.map(c => (
+            <div
+              key={c.id}
+              className="p-1.5 border border-hairline rounded text-[11.5px] bg-elevated"
+            >
+              <div className="text-subtle text-[10.5px] truncate">
+                {c.path}:{c.lineNumber}
+                {c.inReplyToId != null && ' · reply'}
+              </div>
+              <div className="line-clamp-2 text-fg">{c.body || '(empty)'}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <label className="flex flex-col gap-1 flex-1 min-h-0">
         <span className="text-[11px] text-muted">Summary</span>
@@ -977,7 +1126,7 @@ function PRReviewPanel({
           value={pending.summary}
           onChange={e => onSummary(e.target.value)}
           placeholder="Overall feedback…"
-          className="w-full text-[12.5px] flex-1 min-h-[100px]"
+          className="w-full text-[12.5px] flex-1 min-h-[80px]"
         />
       </label>
 
@@ -1283,6 +1432,8 @@ function LoadedView({
 }) {
   const target = useMemo(() => localReviewTarget(repo, source), [repo, sourceKey(source)])
   const [pending, setPending] = useState<PendingReview | null>(null)
+  type Editing = { comment: LineComment; isNew: boolean }
+  const [editingComments, setEditingComments] = useState<Map<string, Editing>>(new Map())
 
   useEffect(() => {
     window.api.reviewGet(target).then(setPending)
@@ -1335,8 +1486,19 @@ function LoadedView({
         map.set(c.path, list)
       }
     }
+    for (const edit of editingComments.values()) {
+      if (!edit.isNew) continue
+      const c = edit.comment
+      const list = map.get(c.path) ?? []
+      list.push({
+        side: c.side === 'old' ? 'deletions' : 'additions',
+        lineNumber: c.lineNumber,
+        metadata: { kind: 'pending', comment: c }
+      })
+      map.set(c.path, list)
+    }
     return map
-  }, [pending])
+  }, [pending, editingComments])
 
   const codeViewItems = useMemo(
     () =>
@@ -1411,58 +1573,95 @@ function LoadedView({
   }
 
   /**
-   * Append a draft line comment, starting a Pending Review on the fly
-   * if one doesn't exist yet. Called from the gutter `+`.
+   * Inline editing state — see PRReviewLoaded for the rationale. Drafts
+   * are buffered here until the user clicks Add review comment, at
+   * which point they're persisted into the pending review.
    */
-  const appendPendingComment = (spec: {
-    path: string
-    lineNumber: number
-    side: 'old' | 'new'
-  }) => {
-    const newComment: LineComment = {
-      id: crypto.randomUUID(),
+  const startDraft = (spec: { path: string; lineNumber: number; side: 'old' | 'new' }) => {
+    const id = crypto.randomUUID()
+    const comment: LineComment = {
+      id,
       path: spec.path,
       lineNumber: spec.lineNumber,
       side: spec.side,
       body: ''
     }
-    if (pending) {
-      updatePending({
-        ...pending,
-        lineComments: [...pending.lineComments, newComment],
-        updatedAt: Date.now()
-      })
-      return
-    }
-    const review: PendingReview = {
-      target,
-      snapshot: { files: liveFiles },
-      lineComments: [newComment],
-      summary: '',
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    }
-    setPending(review)
-    window.api.reviewUpsert(review)
+    setEditingComments(prev => new Map(prev).set(id, { comment, isNew: true }))
     setReviewPanelOpen(true)
   }
 
-  const removeComment = (id: string) => {
+  const startEdit = (commentId: string) => {
+    const existing = pending?.lineComments.find(c => c.id === commentId)
+    if (!existing) return
+    setEditingComments(prev =>
+      new Map(prev).set(commentId, { comment: { ...existing }, isNew: false })
+    )
+  }
+
+  const updateEditBody = (id: string, body: string) => {
+    setEditingComments(prev => {
+      const e = prev.get(id)
+      if (!e) return prev
+      const next = new Map(prev)
+      next.set(id, { ...e, comment: { ...e.comment, body } })
+      return next
+    })
+  }
+
+  const submitEdit = (id: string) => {
+    const edit = editingComments.get(id)
+    if (!edit) return
+    if (edit.isNew) {
+      if (pending) {
+        updatePending({
+          ...pending,
+          lineComments: [...pending.lineComments, edit.comment],
+          updatedAt: Date.now()
+        })
+      } else {
+        const review: PendingReview = {
+          target,
+          snapshot: { files: liveFiles },
+          lineComments: [edit.comment],
+          summary: '',
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+        setPending(review)
+        window.api.reviewUpsert(review)
+        setReviewPanelOpen(true)
+      }
+    } else {
+      if (!pending) return
+      updatePending({
+        ...pending,
+        lineComments: pending.lineComments.map(c => (c.id === id ? edit.comment : c)),
+        updatedAt: Date.now()
+      })
+    }
+    setEditingComments(prev => {
+      const next = new Map(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
+  const cancelEdit = (id: string) => {
+    setEditingComments(prev => {
+      const next = new Map(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
+  const removeFromPending = (id: string) => {
     if (!pending) return
     updatePending({
       ...pending,
       lineComments: pending.lineComments.filter(c => c.id !== id),
       updatedAt: Date.now()
     })
-  }
-
-  const editComment = (id: string, patch: Partial<LineComment>) => {
-    if (!pending) return
-    updatePending({
-      ...pending,
-      lineComments: pending.lineComments.map(c => (c.id === id ? { ...c, ...patch } : c)),
-      updatedAt: Date.now()
-    })
+    cancelEdit(id)
   }
 
   const updateSummary = (summary: string) => {
@@ -1569,7 +1768,7 @@ function LoadedView({
                 options={{
                   enableGutterUtility: true,
                   onGutterUtilityClick: (range, ctx) => {
-                    appendPendingComment({
+                    startDraft({
                       path: ctx.item.id,
                       lineNumber: range.start,
                       side: range.side === 'deletions' ? 'old' : 'new'
@@ -1579,11 +1778,25 @@ function LoadedView({
                 renderAnnotation={ann => {
                   const meta = ann.metadata!
                   if (meta.kind === 'existing') return null
+                  const id = meta.comment.id
+                  const editing = editingComments.get(id)
+                  if (editing) {
+                    return (
+                      <PendingCommentEditor
+                        comment={editing.comment}
+                        onChange={body => updateEditBody(id, body)}
+                        onSubmit={() => submitEdit(id)}
+                        onCancel={() => cancelEdit(id)}
+                      />
+                    )
+                  }
+                  const submitted = pending?.lineComments.find(c => c.id === id)
+                  if (!submitted) return null
                   return (
-                    <PendingCommentAnnotation
-                      comment={meta.comment}
-                      onEdit={patch => editComment(meta.comment.id, patch)}
-                      onRemove={() => removeComment(meta.comment.id)}
+                    <PendingCommentCard
+                      comment={submitted}
+                      onEdit={() => startEdit(id)}
+                      onDelete={() => removeFromPending(id)}
                     />
                   )
                 }}
@@ -1638,13 +1851,29 @@ function ReviewPanel({
         {count === 0 ? 'No comments yet — click the + in the gutter' : `${count} ${count === 1 ? 'comment' : 'comments'}`}
       </div>
 
+      {count > 0 && (
+        <div className="overflow-auto flex flex-col gap-1.5 max-h-[40%] shrink-0">
+          {pending.lineComments.map(c => (
+            <div
+              key={c.id}
+              className="p-1.5 border border-hairline rounded text-[11.5px] bg-elevated"
+            >
+              <div className="text-subtle text-[10.5px] truncate">
+                {c.path}:{c.lineNumber}
+              </div>
+              <div className="line-clamp-2 text-fg">{c.body || '(empty)'}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <label className="flex flex-col gap-1 flex-1 min-h-0">
         <span className="text-[11px] text-muted">Summary</span>
         <Textarea
           value={pending.summary}
           onChange={e => onSummaryChange(e.target.value)}
           placeholder="Overall feedback for the agent…"
-          className="w-full text-[12.5px] flex-1 min-h-[100px]"
+          className="w-full text-[12.5px] flex-1 min-h-[80px]"
         />
       </label>
 
