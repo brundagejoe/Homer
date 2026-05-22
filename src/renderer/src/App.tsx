@@ -54,6 +54,15 @@ type Status =
   | { type: 'loaded'; repo: string; files: FileWithPatch[] }
   | { type: 'error'; message: string }
 
+/**
+ * Annotation payload for Pierre. Existing threads come from GitHub and
+ * render read-only; pending comments are local drafts that render as an
+ * editable composer. Both kinds anchor to a (path, lineNumber, side).
+ */
+type AnnotationMeta =
+  | { kind: 'existing'; comment: InlineComment }
+  | { kind: 'pending'; comment: LineComment }
+
 const DEFAULT_SOURCE: DiffSourceSpec = { type: 'working-tree-vs-head' }
 
 /**
@@ -121,6 +130,78 @@ function ChevronToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: 
         <Icon size={12} strokeWidth={2.4} />
       </button>
     </Tooltip>
+  )
+}
+
+/**
+ * Read-only render of an existing GitHub thread (the yellow inline
+ * card). A Reply button appears when the viewer has no draft reply to
+ * this thread yet.
+ */
+function ExistingThreadAnnotation({
+  comment,
+  hasReply,
+  onReply
+}: {
+  comment: InlineComment
+  hasReply: boolean
+  onReply?: () => void
+}) {
+  return (
+    <div className="review-annotation rounded-md px-2.5 py-1.5 mx-2 my-1 text-[12.5px]">
+      <div className="text-[11px] text-subtle">
+        {comment.author} · {new Date(comment.createdAt).toLocaleString()}
+      </div>
+      <Markdown compact>{comment.body}</Markdown>
+      {onReply && !hasReply && (
+        <Button size="sm" onClick={onReply} className="self-start mt-1">
+          Reply
+        </Button>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Editable composer for a draft LineComment. Renders a textarea bound
+ * to `comment.body` plus a small Remove button. Autofocuses when the
+ * body is empty (i.e. just-created) so the user can start typing.
+ */
+function PendingCommentAnnotation({
+  comment,
+  onEdit,
+  onRemove
+}: {
+  comment: LineComment
+  onEdit: (patch: Partial<LineComment>) => void
+  onRemove: () => void
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const isReply = comment.inReplyToId != null
+  useEffect(() => {
+    if (comment.body === '') ref.current?.focus()
+    // Only on mount — don't refocus on every edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  return (
+    <div className="border border-hairline-strong rounded-md bg-elevated px-2.5 py-2 mx-2 my-1 flex flex-col gap-1.5">
+      <div className="flex items-center justify-between text-[11px] text-muted">
+        <span>{isReply ? 'Your reply (pending)' : 'Your comment (pending)'}</span>
+        <Tooltip content="Discard">
+          <Button variant="ghost" size="icon" onClick={onRemove} aria-label="Discard">
+            ×
+          </Button>
+        </Tooltip>
+      </div>
+      <Textarea
+        ref={ref}
+        value={comment.body}
+        onChange={e => onEdit({ body: e.target.value })}
+        rows={3}
+        placeholder={isReply ? 'Write a reply…' : 'Write a comment…'}
+        className="w-full text-[12.5px]"
+      />
+    </div>
   )
 }
 
@@ -452,35 +533,45 @@ function PRReviewLoaded({
     window.api.reviewUpsert(next)
   }
 
-  const addComment = (path: string) => {
-    if (!pending) return
-    updatePending({
-      ...pending,
-      lineComments: [
-        ...pending.lineComments,
-        { id: crypto.randomUUID(), path, lineNumber: 1, side: 'new', body: '' }
-      ],
+  /**
+   * Append a draft line comment, starting a Pending Review on the fly
+   * if one doesn't exist yet. Same entry point for fresh comments
+   * (from the gutter `+`) and replies (from the existing-thread card).
+   */
+  const appendPendingComment = (spec: {
+    path: string
+    lineNumber: number
+    side: 'old' | 'new'
+    inReplyToId?: number
+  }) => {
+    const newComment: LineComment = {
+      id: crypto.randomUUID(),
+      path: spec.path,
+      lineNumber: spec.lineNumber,
+      side: spec.side,
+      body: '',
+      ...(spec.inReplyToId != null ? { inReplyToId: spec.inReplyToId } : {})
+    }
+    if (pending) {
+      updatePending({
+        ...pending,
+        lineComments: [...pending.lineComments, newComment],
+        updatedAt: Date.now()
+      })
+      return
+    }
+    const review: PendingReview = {
+      target: reviewTarget,
+      snapshot: { files: files.map(f => ({ ...f, status: 'modified', isBinary: false, oldPath: undefined })) },
+      lineComments: [newComment],
+      summary: '',
+      event: 'COMMENT',
+      createdAt: Date.now(),
       updatedAt: Date.now()
-    })
-  }
-
-  const addReply = (existing: InlineComment) => {
-    if (!pending) return
-    updatePending({
-      ...pending,
-      lineComments: [
-        ...pending.lineComments,
-        {
-          id: crypto.randomUUID(),
-          path: existing.path,
-          lineNumber: existing.lineNumber,
-          side: existing.side === 'LEFT' ? 'old' : 'new',
-          body: '',
-          inReplyToId: existing.id
-        }
-      ],
-      updatedAt: Date.now()
-    })
+    }
+    setPending(review)
+    window.api.reviewUpsert(review)
+    setReviewPanelOpen(true)
   }
 
   const editComment = (id: string, patch: Partial<LineComment>) => {
@@ -586,18 +677,29 @@ function PRReviewLoaded({
   })
 
   const annotationsByPath = useMemo(() => {
-    const map = new Map<string, DiffLineAnnotation<InlineComment>[]>()
+    const map = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>()
     for (const c of inline) {
       const list = map.get(c.path) ?? []
       list.push({
         side: c.side === 'LEFT' ? 'deletions' : 'additions',
         lineNumber: c.lineNumber,
-        metadata: c
+        metadata: { kind: 'existing', comment: c }
       })
       map.set(c.path, list)
     }
+    if (pending) {
+      for (const c of pending.lineComments) {
+        const list = map.get(c.path) ?? []
+        list.push({
+          side: c.side === 'old' ? 'deletions' : 'additions',
+          lineNumber: c.lineNumber,
+          metadata: { kind: 'pending', comment: c }
+        })
+        map.set(c.path, list)
+      }
+    }
     return map
-  }, [inline])
+  }, [inline, pending])
 
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set())
 
@@ -612,7 +714,7 @@ function PRReviewLoaded({
 
   const codeViewItems = useMemo(
     () =>
-      buildCodeViewItems<InlineComment>(
+      buildCodeViewItems<AnnotationMeta>(
         files.map(f => ({ ...f, isBinary: false })),
         p => annotationsByPath.get(p),
         collapsedPaths
@@ -652,19 +754,6 @@ function PRReviewLoaded({
     ),
     [collapsedPaths, toggleCollapsed]
   )
-
-  const repliesByParent = useMemo(() => {
-    const map = new Map<number, LineComment[]>()
-    if (!pending) return map
-    for (const c of pending.lineComments) {
-      if (c.inReplyToId != null) {
-        const list = map.get(c.inReplyToId) ?? []
-        list.push(c)
-        map.set(c.inReplyToId, list)
-      }
-    }
-    return map
-  }, [pending])
 
   return (
     <main className="h-screen flex flex-col bg-surface">
@@ -733,19 +822,47 @@ function PRReviewLoaded({
             </details>
           )}
           {codeViewItems.length > 0 ? (
-            <CodeView
+            <CodeView<AnnotationMeta>
               className={CODE_VIEW_CLASS}
               items={codeViewItems}
               renderHeaderPrefix={renderHeaderPrefix}
-              renderAnnotation={(ann) => {
-                const meta = (ann as DiffLineAnnotation<InlineComment>).metadata!
+              options={{
+                enableGutterUtility: true,
+                onGutterUtilityClick: (range, ctx) => {
+                  appendPendingComment({
+                    path: ctx.item.id,
+                    lineNumber: range.start,
+                    side: range.side === 'deletions' ? 'old' : 'new'
+                  })
+                }
+              }}
+              renderAnnotation={ann => {
+                const meta = ann.metadata!
+                if (meta.kind === 'existing') {
+                  const hasReply = (pending?.lineComments ?? []).some(
+                    c => c.inReplyToId === meta.comment.id
+                  )
+                  return (
+                    <ExistingThreadAnnotation
+                      comment={meta.comment}
+                      hasReply={hasReply}
+                      onReply={() =>
+                        appendPendingComment({
+                          path: meta.comment.path,
+                          lineNumber: meta.comment.lineNumber,
+                          side: meta.comment.side === 'LEFT' ? 'old' : 'new',
+                          inReplyToId: meta.comment.id
+                        })
+                      }
+                    />
+                  )
+                }
                 return (
-                  <div className="review-annotation rounded-md px-2.5 py-1.5 mx-2 my-1 text-[12.5px]">
-                    <div className="text-[11px] text-subtle">
-                      {meta.author} · {new Date(meta.createdAt).toLocaleString()}
-                    </div>
-                    <Markdown compact>{meta.body}</Markdown>
-                  </div>
+                  <PendingCommentAnnotation
+                    comment={meta.comment}
+                    onEdit={patch => editComment(meta.comment.id, patch)}
+                    onRemove={() => removeComment(meta.comment.id)}
+                  />
                 )
               }}
             />
@@ -760,11 +877,7 @@ function PRReviewLoaded({
             <ResizablePanel defaultSize="22%" minSize="15%" maxSize="45%" className="overflow-hidden">
               <PRReviewPanel
                 pending={pending}
-                selectedPath={selectedPath}
                 submitting={submitting}
-                onAddComment={() => addComment(selectedPath)}
-                onEditComment={editComment}
-                onRemoveComment={removeComment}
                 onSummary={setSummary}
                 onEvent={setEvent}
                 onSubmit={submit}
@@ -808,45 +921,15 @@ function PRReviewLoaded({
                 Inline on {selectedPath}
               </div>
             )}
-            {inlineForFile.map(c => {
-              const replies = repliesByParent.get(c.id) ?? []
-              return (
-                <CommentCard key={`inline-${c.id}`}>
-                  <div className="text-[11px] text-subtle">
-                    {c.author} · line {c.lineNumber} ({c.side === 'LEFT' ? 'old' : 'new'}) ·{' '}
-                    {new Date(c.createdAt).toLocaleString()}
-                  </div>
-                  <Markdown compact>{c.body}</Markdown>
-                  {pending && replies.length === 0 && (
-                    <Button size="sm" onClick={() => addReply(c)} className="self-start">
-                      Reply
-                    </Button>
-                  )}
-                  {replies.map(reply => (
-                    <div
-                      key={reply.id}
-                      className="border border-hairline rounded-lg p-2 flex flex-col gap-1.5 bg-selected ml-3"
-                    >
-                      <div className="text-[11px] text-muted">Your reply (pending)</div>
-                      <Textarea
-                        value={reply.body}
-                        onChange={e => editComment(reply.id, { body: e.target.value })}
-                        rows={2}
-                        className="w-full text-[12px]"
-                      />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => removeComment(reply.id)}
-                        className="self-start"
-                      >
-                        Remove reply
-                      </Button>
-                    </div>
-                  ))}
-                </CommentCard>
-              )
-            })}
+            {inlineForFile.map(c => (
+              <CommentCard key={`inline-${c.id}`}>
+                <div className="text-[11px] text-subtle">
+                  {c.author} · line {c.lineNumber} ({c.side === 'LEFT' ? 'old' : 'new'}) ·{' '}
+                  {new Date(c.createdAt).toLocaleString()}
+                </div>
+                <Markdown compact>{c.body}</Markdown>
+              </CommentCard>
+            ))}
           </div>
         </aside>
         </ResizablePanel>
@@ -859,89 +942,38 @@ function PRReviewLoaded({
 
 function PRReviewPanel({
   pending,
-  selectedPath,
   submitting,
-  onAddComment,
-  onEditComment,
-  onRemoveComment,
   onSummary,
   onEvent,
   onSubmit,
   onDiscard
 }: {
   pending: PendingReview
-  selectedPath: string
   submitting: boolean
-  onAddComment: () => void
-  onEditComment: (id: string, patch: Partial<LineComment>) => void
-  onRemoveComment: (id: string) => void
   onSummary: (s: string) => void
   onEvent: (e: ReviewEvent) => void
   onSubmit: () => void
   onDiscard: () => void
 }) {
-  const fresh = pending.lineComments.filter(c => c.inReplyToId == null)
+  const newCount = pending.lineComments.filter(c => c.inReplyToId == null).length
+  const replyCount = pending.lineComments.length - newCount
   return (
     <aside className="h-full w-full bg-sidebar p-3 flex flex-col gap-3 overflow-hidden">
       <h3 className="m-0 text-[14px] font-semibold">Pending PR review</h3>
 
-      <Button onClick={onAddComment} className="self-start">
-        + Comment on {selectedPath || '(no file selected)'}
-      </Button>
-
-      <div className="flex-1 overflow-auto flex flex-col gap-2">
-        {fresh.length === 0 && (
-          <div className="text-subtle text-[12.5px]">
-            No new comments yet. Use Reply on existing threads or add new comments here.
-          </div>
-        )}
-        {fresh.map(c => (
-          <CommentCard key={c.id}>
-            <div className="flex gap-2 items-center text-[12px]">
-              <code className="flex-1 truncate">{c.path}:</code>
-              <Input
-                type="number"
-                min={1}
-                value={c.lineNumber}
-                onChange={e => onEditComment(c.id, { lineNumber: Number(e.target.value) })}
-                className="w-14"
-              />
-              <Select
-                value={c.side}
-                onChange={e => onEditComment(c.id, { side: e.target.value as 'old' | 'new' })}
-              >
-                <option value="new">new</option>
-                <option value="old">old</option>
-              </Select>
-              <Tooltip content="Remove comment">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onRemoveComment(c.id)}
-                  aria-label="Remove comment"
-                >
-                  ×
-                </Button>
-              </Tooltip>
-            </div>
-            <Textarea
-              value={c.body}
-              onChange={e => onEditComment(c.id, { body: e.target.value })}
-              rows={3}
-              className="w-full text-[12.5px]"
-            />
-          </CommentCard>
-        ))}
+      <div className="text-[12px] text-muted">
+        {newCount} new {newCount === 1 ? 'comment' : 'comments'}
+        {replyCount > 0 && ` · ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}`}
+        {pending.lineComments.length === 0 && ' — click the + in the gutter to add one'}
       </div>
 
-      <label className="flex flex-col gap-1">
+      <label className="flex flex-col gap-1 flex-1 min-h-0">
         <span className="text-[11px] text-muted">Summary</span>
         <Textarea
           value={pending.summary}
           onChange={e => onSummary(e.target.value)}
-          rows={4}
           placeholder="Overall feedback…"
-          className="w-full text-[12.5px]"
+          className="w-full text-[12.5px] flex-1 min-h-[100px]"
         />
       </label>
 
@@ -1286,9 +1318,30 @@ function LoadedView({
     })
   }, [])
 
+  const annotationsByPath = useMemo(() => {
+    const map = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>()
+    if (pending) {
+      for (const c of pending.lineComments) {
+        const list = map.get(c.path) ?? []
+        list.push({
+          side: c.side === 'old' ? 'deletions' : 'additions',
+          lineNumber: c.lineNumber,
+          metadata: { kind: 'pending', comment: c }
+        })
+        map.set(c.path, list)
+      }
+    }
+    return map
+  }, [pending])
+
   const codeViewItems = useMemo(
-    () => buildCodeViewItems(files, undefined, collapsedPaths),
-    [files, collapsedPaths]
+    () =>
+      buildCodeViewItems<AnnotationMeta>(
+        files,
+        p => annotationsByPath.get(p),
+        collapsedPaths
+      ),
+    [files, annotationsByPath, collapsedPaths]
   )
   const diffSectionRef = useRef<HTMLElement>(null)
   const codeViewItemsRef = useRef(codeViewItems)
@@ -1353,20 +1406,41 @@ function LoadedView({
     window.api.reviewUpsert(next)
   }
 
-  const addComment = (path: string) => {
-    if (!pending) return
-    const comment: LineComment = {
+  /**
+   * Append a draft line comment, starting a Pending Review on the fly
+   * if one doesn't exist yet. Called from the gutter `+`.
+   */
+  const appendPendingComment = (spec: {
+    path: string
+    lineNumber: number
+    side: 'old' | 'new'
+  }) => {
+    const newComment: LineComment = {
       id: crypto.randomUUID(),
-      path,
-      lineNumber: 1,
-      side: 'new',
+      path: spec.path,
+      lineNumber: spec.lineNumber,
+      side: spec.side,
       body: ''
     }
-    updatePending({
-      ...pending,
-      lineComments: [...pending.lineComments, comment],
+    if (pending) {
+      updatePending({
+        ...pending,
+        lineComments: [...pending.lineComments, newComment],
+        updatedAt: Date.now()
+      })
+      return
+    }
+    const review: PendingReview = {
+      target,
+      snapshot: { files: liveFiles },
+      lineComments: [newComment],
+      summary: '',
+      createdAt: Date.now(),
       updatedAt: Date.now()
-    })
+    }
+    setPending(review)
+    window.api.reviewUpsert(review)
+    setReviewPanelOpen(true)
   }
 
   const removeComment = (id: string) => {
@@ -1484,10 +1558,31 @@ function LoadedView({
             className="diff-host w-full h-full flex flex-col"
           >
             {codeViewItems.length > 0 ? (
-              <CodeView
+              <CodeView<AnnotationMeta>
                 className={CODE_VIEW_CLASS}
                 items={codeViewItems}
                 renderHeaderPrefix={renderHeaderPrefix}
+                options={{
+                  enableGutterUtility: true,
+                  onGutterUtilityClick: (range, ctx) => {
+                    appendPendingComment({
+                      path: ctx.item.id,
+                      lineNumber: range.start,
+                      side: range.side === 'deletions' ? 'old' : 'new'
+                    })
+                  }
+                }}
+                renderAnnotation={ann => {
+                  const meta = ann.metadata!
+                  if (meta.kind === 'existing') return null
+                  return (
+                    <PendingCommentAnnotation
+                      comment={meta.comment}
+                      onEdit={patch => editComment(meta.comment.id, patch)}
+                      onRemove={() => removeComment(meta.comment.id)}
+                    />
+                  )
+                }}
               />
             ) : (
               <div className="p-4 text-subtle">
@@ -1504,10 +1599,6 @@ function LoadedView({
             <ResizablePanel defaultSize="25%" minSize="15%" maxSize="45%" className="overflow-hidden">
               <ReviewPanel
                 pending={pending}
-                selectedPath={selectedPath}
-                onAddComment={() => addComment(selectedPath)}
-                onRemoveComment={removeComment}
-                onEditComment={editComment}
                 onSummaryChange={updateSummary}
                 onRefresh={refreshSnapshot}
                 onSubmit={submitToAgent}
@@ -1523,85 +1614,33 @@ function LoadedView({
 
 function ReviewPanel({
   pending,
-  selectedPath,
-  onAddComment,
-  onRemoveComment,
-  onEditComment,
   onSummaryChange,
   onRefresh,
   onSubmit,
   onDiscard
 }: {
   pending: PendingReview
-  selectedPath: string
-  onAddComment: () => void
-  onRemoveComment: (id: string) => void
-  onEditComment: (id: string, patch: Partial<LineComment>) => void
   onSummaryChange: (summary: string) => void
   onRefresh: () => void
   onSubmit: () => void
   onDiscard: () => void
 }) {
+  const count = pending.lineComments.length
   return (
     <aside className="h-full w-full bg-sidebar p-3 flex flex-col gap-3 overflow-hidden">
       <h3 className="m-0 text-[14px] font-semibold">Pending review</h3>
 
-      <Button onClick={onAddComment} className="self-start">
-        + Comment on {selectedPath || '(no file selected)'}
-      </Button>
-
-      <div className="flex-1 overflow-auto flex flex-col gap-2">
-        {pending.lineComments.length === 0 && (
-          <div className="text-subtle text-[12.5px]">No comments yet.</div>
-        )}
-        {pending.lineComments.map(c => (
-          <CommentCard key={c.id}>
-            <div className="flex gap-2 items-center text-[12px]">
-              <code className="flex-1 truncate">{c.path}:</code>
-              <Input
-                type="number"
-                min={1}
-                value={c.lineNumber}
-                onChange={e => onEditComment(c.id, { lineNumber: Number(e.target.value) })}
-                className="w-14"
-              />
-              <Select
-                value={c.side}
-                onChange={e => onEditComment(c.id, { side: e.target.value as 'old' | 'new' })}
-              >
-                <option value="new">new</option>
-                <option value="old">old</option>
-              </Select>
-              <Tooltip content="Remove comment">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onRemoveComment(c.id)}
-                  aria-label="Remove comment"
-                >
-                  ×
-                </Button>
-              </Tooltip>
-            </div>
-            <Textarea
-              value={c.body}
-              onChange={e => onEditComment(c.id, { body: e.target.value })}
-              placeholder="Comment body…"
-              rows={3}
-              className="w-full text-[12.5px]"
-            />
-          </CommentCard>
-        ))}
+      <div className="text-[12px] text-muted">
+        {count === 0 ? 'No comments yet — click the + in the gutter' : `${count} ${count === 1 ? 'comment' : 'comments'}`}
       </div>
 
-      <label className="flex flex-col gap-1">
+      <label className="flex flex-col gap-1 flex-1 min-h-0">
         <span className="text-[11px] text-muted">Summary</span>
         <Textarea
           value={pending.summary}
           onChange={e => onSummaryChange(e.target.value)}
-          rows={4}
           placeholder="Overall feedback for the agent…"
-          className="w-full text-[12.5px]"
+          className="w-full text-[12.5px] flex-1 min-h-[100px]"
         />
       </label>
 
