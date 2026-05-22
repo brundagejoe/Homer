@@ -1,4 +1,6 @@
 import { useEffect } from 'react'
+import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 
 export interface ShortcutHelp {
   keys: string
@@ -30,7 +32,9 @@ export function HelpOverlay({ shortcuts, onClose }: { shortcuts: ShortcutHelp[];
       >
         <div className="flex justify-between items-center mb-2">
           <h2 className="m-0 text-[16px]">Keyboard shortcuts</h2>
-          <Button variant="ghost" size="icon" onClick={onClose} title="Close (Esc)">×</Button>
+          <Tooltip content="Close" shortcut="Esc">
+            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">×</Button>
+          </Tooltip>
         </div>
         <table className="w-full border-collapse text-[13px]">
           <tbody>
@@ -50,4 +54,3 @@ export function HelpOverlay({ shortcuts, onClose }: { shortcuts: ShortcutHelp[];
     </div>
   )
 }
-import { Button } from '@/components/ui/button'

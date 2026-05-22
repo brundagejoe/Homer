@@ -12,6 +12,8 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select } from '@/components/ui/select'
+import { toast } from '@/components/ui/toast'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -96,15 +98,17 @@ function buildCodeViewItems<T>(
 
 function ChevronToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const Icon = collapsed ? ChevronRight : ChevronDown
+  const label = collapsed ? 'Expand file' : 'Collapse file'
   return (
-    <button
-      onClick={onToggle}
-      title={collapsed ? 'Expand file' : 'Collapse file'}
-      aria-label={collapsed ? 'Expand file' : 'Collapse file'}
-      className="inline-flex items-center justify-center w-4 h-4 p-0 m-0 appearance-none bg-transparent border-0 rounded-none shadow-none text-subtle hover:text-fg hover:bg-hover/60 [-webkit-app-region:no-drag]"
-    >
-      <Icon size={12} strokeWidth={2.4} />
-    </button>
+    <Tooltip content={label}>
+      <button
+        onClick={onToggle}
+        aria-label={label}
+        className="inline-flex items-center justify-center w-4 h-4 p-0 m-0 appearance-none bg-transparent border-0 rounded-none shadow-none text-subtle hover:text-fg hover:bg-hover/60 [-webkit-app-region:no-drag]"
+      >
+        <Icon size={12} strokeWidth={2.4} />
+      </button>
+    </Tooltip>
   )
 }
 
@@ -394,9 +398,7 @@ function PRReviewLoaded({
   )
 
   const [pending, setPending] = useState<PendingReview | null>(null)
-  const [submitState, setSubmitState] = useState<
-    { kind: 'idle' } | { kind: 'submitting' } | { kind: 'submitted'; url: string } | { kind: 'error'; message: string }
-  >({ kind: 'idle' })
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     window.api.reviewGet(reviewTarget).then(setPending)
@@ -495,13 +497,22 @@ function PRReviewLoaded({
 
   const submit = async () => {
     if (!pending) return
-    setSubmitState({ kind: 'submitting' })
+    setSubmitting(true)
     try {
       const { url } = await window.api.reviewSubmitToGithub(pending)
-      setSubmitState({ kind: 'submitted', url })
       setPending(null)
+      toast.success('Review submitted', {
+        actionLabel: 'Open on GitHub',
+        onAction: () => window.open(url, '_blank', 'noreferrer')
+      })
     } catch (err) {
-      setSubmitState({ kind: 'error', message: (err as Error).message })
+      toast.error('Submit failed', {
+        description: (err as Error).message,
+        actionLabel: 'Retry',
+        onAction: submit
+      })
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -614,23 +625,22 @@ function PRReviewLoaded({
               · review in progress ({pending.lineComments.length} comment{pending.lineComments.length === 1 ? '' : 's'})
             </span>
           )}
-          {submitState.kind === 'submitted' && (
-            <span className="ml-2 text-success">· review submitted</span>
-          )}
         </span>
         {!pending && (
           <Button variant="primary" onClick={startReview}>
             Start review
           </Button>
         )}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setConversationOpen(o => !o)}
-          title={conversationOpen ? 'Hide conversation' : 'Show conversation'}
-        >
-          💬{totalThreads > 0 ? ` ${totalThreads}` : ''}
-        </Button>
+        <Tooltip content={conversationOpen ? 'Hide conversation' : 'Show conversation'}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setConversationOpen(o => !o)}
+            aria-label={conversationOpen ? 'Hide conversation' : 'Show conversation'}
+          >
+            💬{totalThreads > 0 ? ` ${totalThreads}` : ''}
+          </Button>
+        </Tooltip>
         <StateBadge state={pr.state} />
         <OpenOnGithubButton url={pr.url || prHtmlUrl(target)} />
         <GhAuthIndicator />
@@ -665,7 +675,7 @@ function PRReviewLoaded({
               renderAnnotation={(ann) => {
                 const meta = (ann as DiffLineAnnotation<InlineComment>).metadata!
                 return (
-                  <div className="bg-[rgba(255,224,138,0.55)] border border-[rgba(217,154,0,0.35)] rounded-md px-2.5 py-1.5 mx-2 my-1 text-[12.5px]">
+                  <div className="review-annotation rounded-md px-2.5 py-1.5 mx-2 my-1 text-[12.5px]">
                     <div className="text-[11px] text-subtle">
                       {meta.author} · {new Date(meta.createdAt).toLocaleString()}
                     </div>
@@ -686,7 +696,7 @@ function PRReviewLoaded({
               <PRReviewPanel
                 pending={pending}
                 selectedPath={selectedPath}
-                submitState={submitState}
+                submitting={submitting}
                 onAddComment={() => addComment(selectedPath)}
                 onEditComment={editComment}
                 onRemoveComment={removeComment}
@@ -705,14 +715,16 @@ function PRReviewLoaded({
         <aside className="w-full h-full px-3.5 py-3 flex flex-col gap-2 bg-sidebar overflow-hidden">
           <div className="flex justify-between items-center">
             <h3 className="m-0 text-[14px] font-semibold">Conversation</h3>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setConversationOpen(false)}
-              title="Hide conversation"
-            >
-              ×
-            </Button>
+            <Tooltip content="Hide conversation">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setConversationOpen(false)}
+                aria-label="Hide conversation"
+              >
+                ×
+              </Button>
+            </Tooltip>
           </div>
           <div className="overflow-auto flex flex-col gap-2">
             {conversation.length === 0 && inlineForFile.length === 0 && (
@@ -783,7 +795,7 @@ function PRReviewLoaded({
 function PRReviewPanel({
   pending,
   selectedPath,
-  submitState,
+  submitting,
   onAddComment,
   onEditComment,
   onRemoveComment,
@@ -794,11 +806,7 @@ function PRReviewPanel({
 }: {
   pending: PendingReview
   selectedPath: string
-  submitState:
-    | { kind: 'idle' }
-    | { kind: 'submitting' }
-    | { kind: 'submitted'; url: string }
-    | { kind: 'error'; message: string }
+  submitting: boolean
   onAddComment: () => void
   onEditComment: (id: string, patch: Partial<LineComment>) => void
   onRemoveComment: (id: string) => void
@@ -840,14 +848,16 @@ function PRReviewPanel({
                 <option value="new">new</option>
                 <option value="old">old</option>
               </Select>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => onRemoveComment(c.id)}
-                title="Remove comment"
-              >
-                ×
-              </Button>
+              <Tooltip content="Remove comment">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onRemoveComment(c.id)}
+                  aria-label="Remove comment"
+                >
+                  ×
+                </Button>
+              </Tooltip>
             </div>
             <Textarea
               value={c.body}
@@ -882,18 +892,14 @@ function PRReviewPanel({
         </Select>
       </label>
 
-      {submitState.kind === 'error' && (
-        <div className="text-danger text-[12px]">Failed: {submitState.message}</div>
-      )}
-
       <div className="flex gap-2">
         <Button
           variant="primary"
           onClick={onSubmit}
-          disabled={submitState.kind === 'submitting'}
+          disabled={submitting}
           className="flex-1"
         >
-          {submitState.kind === 'submitting' ? 'Submitting…' : 'Submit review'}
+          {submitting ? 'Submitting…' : 'Submit review'}
         </Button>
         <Button onClick={onDiscard}>Discard</Button>
       </div>
@@ -920,15 +926,17 @@ function prHtmlUrl(t: PrTarget): string {
 
 function OpenOnGithubButton({ url }: { url: string }) {
   return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noreferrer"
-      title="Open PR on GitHub"
-      className="inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-fg px-1.5 py-0.5 rounded hover:bg-hover [-webkit-app-region:no-drag]"
-    >
-      <ExternalLink size={12} strokeWidth={2.2} />
-    </a>
+    <Tooltip content="Open PR on GitHub">
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        aria-label="Open PR on GitHub"
+        className="inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-fg px-1.5 py-0.5 rounded hover:bg-hover [-webkit-app-region:no-drag]"
+      >
+        <ExternalLink size={12} strokeWidth={2.2} />
+      </a>
+    </Tooltip>
   )
 }
 
@@ -1084,14 +1092,16 @@ const HELP_EVENT = 'dv:show-help'
 
 function HelpButton() {
   return (
-    <Button
-      size="sm"
-      onClick={() => window.dispatchEvent(new CustomEvent(HELP_EVENT))}
-      title="Keyboard shortcuts (?)"
-      className="rounded-full px-2"
-    >
-      ?
-    </Button>
+    <Tooltip content="Keyboard shortcuts" shortcut="?">
+      <Button
+        size="sm"
+        onClick={() => window.dispatchEvent(new CustomEvent(HELP_EVENT))}
+        aria-label="Keyboard shortcuts"
+        className="rounded-full px-2"
+      >
+        ?
+      </Button>
+    </Tooltip>
   )
 }
 
@@ -1120,27 +1130,27 @@ function GhAuthIndicator() {
   switch (auth.kind) {
     case 'authenticated':
       return (
-        <Badge tone="success" className={cls} title="GitHub CLI is authenticated">
-          gh @{auth.user}
-        </Badge>
+        <Tooltip content="GitHub CLI is authenticated">
+          <Badge tone="success" className={cls}>gh @{auth.user}</Badge>
+        </Tooltip>
       )
     case 'not-authenticated':
       return (
-        <Badge tone="warning" className={cls} title="Run `gh auth login` in a terminal">
-          gh: not signed in
-        </Badge>
+        <Tooltip content="Run `gh auth login` in a terminal">
+          <Badge tone="warning" className={cls}>gh: not signed in</Badge>
+        </Tooltip>
       )
     case 'gh-not-installed':
       return (
-        <Badge tone="danger" className={cls} title="Install gh: https://cli.github.com">
-          gh: not installed
-        </Badge>
+        <Tooltip content="Install gh: https://cli.github.com">
+          <Badge tone="danger" className={cls}>gh: not installed</Badge>
+        </Tooltip>
       )
     case 'error':
       return (
-        <Badge tone="danger" className={cls} title={auth.message}>
-          gh: error
-        </Badge>
+        <Tooltip content={auth.message}>
+          <Badge tone="danger" className={cls}>gh: error</Badge>
+        </Tooltip>
       )
   }
 }
@@ -1303,8 +1313,13 @@ function LoadedView({
 
   const submitToAgent = async () => {
     if (!pending) return
-    await window.api.reviewSubmitToAgent(pending)
-    setPending(null)
+    try {
+      await window.api.reviewSubmitToAgent(pending)
+      setPending(null)
+      toast.success('Copied to clipboard', { timeout: 3000 })
+    } catch (err) {
+      toast.error('Copy failed', { description: (err as Error).message })
+    }
   }
 
   const discardReview = async () => {
@@ -1439,14 +1454,16 @@ function ReviewPanel({
                 <option value="new">new</option>
                 <option value="old">old</option>
               </Select>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => onRemoveComment(c.id)}
-                title="Remove comment"
-              >
-                ×
-              </Button>
+              <Tooltip content="Remove comment">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onRemoveComment(c.id)}
+                  aria-label="Remove comment"
+                >
+                  ×
+                </Button>
+              </Tooltip>
             </div>
             <Textarea
               value={c.body}
@@ -1474,9 +1491,11 @@ function ReviewPanel({
         <Button variant="primary" onClick={onSubmit} className="flex-1">
           Submit to Agent (copy)
         </Button>
-        <Button variant="ghost" size="icon" onClick={onRefresh} title="Re-snapshot the diff">
-          ↻
-        </Button>
+        <Tooltip content="Re-snapshot the diff">
+          <Button variant="ghost" size="icon" onClick={onRefresh} aria-label="Re-snapshot the diff">
+            ↻
+          </Button>
+        </Tooltip>
         <Button onClick={onDiscard}>Discard</Button>
       </div>
     </aside>
