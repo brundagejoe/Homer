@@ -14,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select } from '@/components/ui/select'
 import { toast } from '@/components/ui/toast'
 import { Tooltip } from '@/components/ui/tooltip'
+import { confirm } from '@/components/ui/alert-dialog'
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -518,7 +519,13 @@ function PRReviewLoaded({
 
   const discard = async () => {
     if (!pending) return
-    if (!confirm('Discard pending review?')) return
+    const ok = await confirm({
+      title: 'Discard pending review?',
+      description: 'All drafted comments and the summary will be lost.',
+      confirmLabel: 'Discard',
+      destructive: true
+    })
+    if (!ok) return
     await window.api.reviewDelete(reviewTarget)
     setPending(null)
   }
@@ -1257,12 +1264,13 @@ function LoadedView({
 
   const refreshSnapshot = async () => {
     if (!pending) return
-    if (
-      !confirm(
-        'Refresh snapshot? Comments anchored to lines that have moved or been removed may become stale.'
-      )
-    )
-      return
+    const ok = await confirm({
+      title: 'Refresh snapshot?',
+      description:
+        'Comments anchored to lines that have moved or been removed may become stale.',
+      confirmLabel: 'Refresh'
+    })
+    if (!ok) return
     const { files: fresh } = await window.api.getLocalDiff(repo)
     updatePending({ ...pending, snapshot: { files: fresh }, updatedAt: Date.now() })
   }
@@ -1324,7 +1332,13 @@ function LoadedView({
 
   const discardReview = async () => {
     if (!pending) return
-    if (!confirm('Discard pending review?')) return
+    const ok = await confirm({
+      title: 'Discard pending review?',
+      description: 'All drafted comments and the summary will be lost.',
+      confirmLabel: 'Discard',
+      destructive: true
+    })
+    if (!ok) return
     await window.api.reviewDelete(target)
     setPending(null)
   }
