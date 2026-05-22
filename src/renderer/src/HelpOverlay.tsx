@@ -21,50 +21,27 @@ export function HelpOverlay({ shortcuts, onClose }: { shortcuts: ShortcutHelp[];
     <div
       role="dialog"
       aria-modal="true"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.4)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 50
-      }}
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center"
       onClick={onClose}
     >
       <div
         onClick={e => e.stopPropagation()}
-        style={{
-          background: '#fff',
-          borderRadius: 6,
-          padding: '1rem 1.25rem',
-          minWidth: 340,
-          maxWidth: 520,
-          boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
-        }}
+        className="bg-elevated rounded-md px-5 py-4 min-w-[340px] max-w-[520px] shadow-[0_10px_40px_rgba(0,0,0,0.2)] border border-hairline"
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-          <h2 style={{ margin: 0, fontSize: '1rem' }}>Keyboard shortcuts</h2>
-          <button onClick={onClose} title="Close (Esc)">×</button>
+        <div className="flex justify-between items-center mb-2">
+          <h2 className="m-0 text-[16px]">Keyboard shortcuts</h2>
+          <Button variant="ghost" size="icon" onClick={onClose} title="Close (Esc)">×</Button>
         </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <table className="w-full border-collapse text-[13px]">
           <tbody>
             {shortcuts.map(s => (
               <tr key={s.keys}>
-                <td style={{ padding: '0.25rem 0.5rem 0.25rem 0', whiteSpace: 'nowrap' }}>
-                  <kbd
-                    style={{
-                      fontFamily: 'ui-monospace, monospace',
-                      background: '#f3f3f3',
-                      border: '1px solid #ddd',
-                      borderRadius: 3,
-                      padding: '0.05rem 0.4rem'
-                    }}
-                  >
+                <td className="py-1 pr-2 whitespace-nowrap">
+                  <kbd className="font-mono bg-sidebar border border-hairline-strong rounded-[3px] px-1.5 py-[1px]">
                     {s.keys}
                   </kbd>
                 </td>
-                <td style={{ padding: '0.25rem 0' }}>{s.description}</td>
+                <td className="py-1">{s.description}</td>
               </tr>
             ))}
           </tbody>
@@ -73,3 +50,4 @@ export function HelpOverlay({ shortcuts, onClose }: { shortcuts: ShortcutHelp[];
     </div>
   )
 }
+import { Button } from '@/components/ui/button'

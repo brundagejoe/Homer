@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { CodeView } from '@pierre/diffs/react'
 import { processFile } from '@pierre/diffs'
 import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs'
@@ -8,11 +9,15 @@ import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
 import { Markdown } from './Markdown'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Select } from '@/components/ui/select'
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle
 } from '@/components/ui/resizable'
+import { TitleBar } from '@/components/TitleBar'
 import type {
   AuthStatus,
   ConversationComment,
@@ -90,28 +95,15 @@ function buildCodeViewItems<T>(
 }
 
 function ChevronToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const Icon = collapsed ? ChevronRight : ChevronDown
   return (
     <button
       onClick={onToggle}
       title={collapsed ? 'Expand file' : 'Collapse file'}
       aria-label={collapsed ? 'Expand file' : 'Collapse file'}
-      style={{
-        padding: 0,
-        margin: 0,
-        width: 14,
-        height: 14,
-        minWidth: 14,
-        fontSize: 9,
-        background: 'transparent',
-        border: 'none',
-        color: 'var(--fg-secondary)',
-        lineHeight: 1,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center'
-      }}
+      className="inline-flex items-center justify-center w-4 h-4 p-0 m-0 appearance-none bg-transparent border-0 rounded-none shadow-none text-subtle hover:text-fg hover:bg-hover/60 [-webkit-app-region:no-drag]"
     >
-      {collapsed ? '▶' : '▼'}
+      <Icon size={12} strokeWidth={2.4} />
     </button>
   )
 }
@@ -135,7 +127,11 @@ export default function App() {
   }, [])
 
   if (!window.api) {
-    return <main style={shellStyle}><header className="titlebar-drag" style={statusBarStyle}>window.api is undefined</header></main>
+    return (
+      <main className="h-screen flex flex-col bg-surface">
+        <TitleBar>window.api is undefined</TitleBar>
+      </main>
+    )
   }
 
   const view = (() => {
@@ -167,8 +163,8 @@ const SHORTCUT_HELP: ShortcutHelp[] = [
 
 function FatalError({ msg }: { msg: string }) {
   return (
-    <main style={shellStyle}>
-      <header className="titlebar-drag" style={statusBarStyle}>{msg}</header>
+    <main className="h-screen flex flex-col bg-surface">
+      <TitleBar>{msg}</TitleBar>
     </main>
   )
 }
@@ -200,9 +196,9 @@ function LocalRoot() {
 
   if (status.type !== 'loaded') {
     return (
-      <main style={shellStyle}>
-        <header className="titlebar-drag" style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
-          <span style={{ flex: 1 }}>
+      <main className="h-screen flex flex-col bg-surface">
+        <TitleBar>
+          <span className="flex-1 truncate">
             {status.type === 'loading' && 'Loading…'}
             {status.type === 'empty' && `${status.repo} — no changes for this source`}
             {status.type === 'error' && `Error: ${status.message}`}
@@ -210,7 +206,7 @@ function LocalRoot() {
           {sourcePicker}
           <GhAuthIndicator />
           <HelpButton />
-        </header>
+        </TitleBar>
       </main>
     )
   }
@@ -235,8 +231,8 @@ function sourceKey(source: DiffSourceSpec): string {
 
 function SourcePicker({ value, onChange }: { value: DiffSourceSpec; onChange: (s: DiffSourceSpec) => void }) {
   return (
-    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: '0.8rem' }}>
-      <select
+    <div className="flex items-center gap-1.5 text-[12px]">
+      <Select
         value={value.type}
         onChange={e => {
           const t = e.target.value as DiffSourceSpec['type']
@@ -250,7 +246,7 @@ function SourcePicker({ value, onChange }: { value: DiffSourceSpec; onChange: (s
             onChange({ type: 'single-commit', sha: 'HEAD' })
           }
         }}
-        style={{ fontSize: '0.8rem' }}
+        className="text-[12px]"
       >
         <option value="working-tree-vs-head">Working tree vs HEAD</option>
         <option value="staged-vs-head">Staged vs HEAD</option>
@@ -258,47 +254,47 @@ function SourcePicker({ value, onChange }: { value: DiffSourceSpec; onChange: (s
         <option value="branch-vs-base">Branch vs base</option>
         <option value="commit-range">Commit range</option>
         <option value="single-commit">Single commit</option>
-      </select>
+      </Select>
       {value.type === 'branch-vs-base' && (
         <>
-          <input
+          <Input
             value={value.head}
             onChange={e => onChange({ ...value, head: e.target.value })}
             placeholder="head"
-            style={{ width: 100, fontSize: '0.75rem' }}
+            className="w-[100px] text-[11.5px]"
           />
-          <span style={{ color: '#888' }}>vs</span>
-          <input
+          <span className="text-subtle">vs</span>
+          <Input
             value={value.base}
             onChange={e => onChange({ ...value, base: e.target.value })}
             placeholder="base"
-            style={{ width: 100, fontSize: '0.75rem' }}
+            className="w-[100px] text-[11.5px]"
           />
         </>
       )}
       {value.type === 'commit-range' && (
         <>
-          <input
+          <Input
             value={value.from}
             onChange={e => onChange({ ...value, from: e.target.value })}
             placeholder="from"
-            style={{ width: 90, fontSize: '0.75rem' }}
+            className="w-[90px] text-[11.5px]"
           />
-          <span style={{ color: '#888' }}>..</span>
-          <input
+          <span className="text-subtle">..</span>
+          <Input
             value={value.to}
             onChange={e => onChange({ ...value, to: e.target.value })}
             placeholder="to"
-            style={{ width: 90, fontSize: '0.75rem' }}
+            className="w-[90px] text-[11.5px]"
           />
         </>
       )}
       {value.type === 'single-commit' && (
-        <input
+        <Input
           value={value.sha}
           onChange={e => onChange({ ...value, sha: e.target.value })}
           placeholder="sha or ref"
-          style={{ width: 140, fontSize: '0.75rem' }}
+          className="w-[140px] text-[11.5px]"
         />
       )}
     </div>
@@ -342,16 +338,16 @@ function PRReviewView({ target }: { target: PrTarget }) {
 
   if (status.type !== 'loaded') {
     return (
-      <main style={shellStyle}>
-        <header className="titlebar-drag" style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between' }}>
-          <span>
+      <main className="h-screen flex flex-col bg-surface">
+        <TitleBar>
+          <span className="flex-1 truncate">
             {target.owner}/{target.repo}#{target.number}
             {status.type === 'loading' && ' — loading…'}
             {status.type === 'error' && ` — error: ${status.message}`}
           </span>
           <GhAuthIndicator />
           <HelpButton />
-        </header>
+        </TitleBar>
       </main>
     )
   }
@@ -558,6 +554,8 @@ function PRReviewLoaded({
   const totalThreads = conversation.length + inline.length
 
   const diffSectionRef = useRef<HTMLElement>(null)
+  const codeViewItemsRef = useRef(codeViewItems)
+  codeViewItemsRef.current = codeViewItems
   useEffect(() => {
     if (!selectedPath || !diffSectionRef.current) return
     setCollapsedPaths(prev => {
@@ -566,14 +564,14 @@ function PRReviewLoaded({
       next.delete(selectedPath)
       return next
     })
-    const idx = codeViewItems.findIndex(i => i.id === selectedPath)
-    if (idx < 0) return
     requestAnimationFrame(() => {
+      const idx = codeViewItemsRef.current.findIndex(i => i.id === selectedPath)
+      if (idx < 0) return
       const containers = diffSectionRef.current?.querySelectorAll('diffs-container')
       const target = containers?.[idx] as HTMLElement | undefined
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
-  }, [selectedPath, codeViewItems])
+  }, [selectedPath])
 
   const renderHeaderPrefix = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -600,41 +598,45 @@ function PRReviewLoaded({
   }, [pending])
 
   return (
-    <main style={shellStyle}>
-      <header className="titlebar-drag" style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
-        <span style={{ flex: 1 }}>
-          <span style={{ fontWeight: 600 }}>
+    <main className="h-screen flex flex-col bg-surface">
+      <TitleBar>
+        <span className="flex-1 truncate min-w-0">
+          <span className="font-semibold">
             {target.owner}/{target.repo}#{pr.number}
           </span>
-          <span style={{ marginLeft: '0.5rem' }}>{pr.title}</span>
-          <span style={{ color: '#888', marginLeft: '0.5rem' }}>
+          <span className="ml-2">{pr.title}</span>
+          <span className="text-subtle ml-2">
             · {pr.author} · {pr.headRef} → {pr.baseRef} · +{pr.additions} −{pr.deletions}
           </span>
           {pending && (
-            <span style={{ marginLeft: '0.5rem', color: '#888' }}>
+            <span className="ml-2 text-subtle">
               · review in progress ({pending.lineComments.length} comment{pending.lineComments.length === 1 ? '' : 's'})
             </span>
           )}
           {submitState.kind === 'submitted' && (
-            <span style={{ marginLeft: '0.5rem', color: '#2a8b3a' }}>· review submitted</span>
+            <span className="ml-2 text-success">· review submitted</span>
           )}
         </span>
-        {!pending && <button className="primary" onClick={startReview}>Start review</button>}
-        <button
+        {!pending && (
+          <Button variant="primary" onClick={startReview}>
+            Start review
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => setConversationOpen(o => !o)}
           title={conversationOpen ? 'Hide conversation' : 'Show conversation'}
-          className="ghost"
-          style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
         >
           💬{totalThreads > 0 ? ` ${totalThreads}` : ''}
-        </button>
+        </Button>
         <StateBadge state={pr.state} />
         <GhAuthIndicator />
         <HelpButton />
-      </header>
+      </TitleBar>
       <ResizablePanelGroup orientation="horizontal" id="pr-review-panes" className="flex-1 min-h-0">
         <ResizablePanel defaultSize="18%" minSize="10%" maxSize="40%" className="overflow-hidden">
-          <aside style={treePaneStyle}>
+          <aside className="w-full h-full overflow-auto bg-sidebar py-1.5">
             <FileTree model={model} />
           </aside>
         </ResizablePanel>
@@ -642,25 +644,14 @@ function PRReviewLoaded({
         <ResizablePanel defaultSize="60%" minSize="30%" className="overflow-hidden">
         <section
           ref={diffSectionRef}
-          className="diff-host"
-          style={{ width: '100%', height: '100%', overflow: 'auto' }}
+          className="diff-host w-full h-full overflow-auto"
         >
           {pr.body && (
-            <details
-              open
-              style={{
-                padding: '0.5rem 1rem',
-                borderBottom: '1px solid var(--hairline)',
-                flexShrink: 0,
-                background: 'var(--bg)'
-              }}
-            >
-              <summary
-                style={{ cursor: 'pointer', color: 'var(--fg-secondary)', fontSize: 12.5 }}
-              >
+            <details open className="px-4 py-2 border-b border-hairline shrink-0 bg-surface">
+              <summary className="cursor-pointer text-muted text-[12.5px]">
                 Description
               </summary>
-              <div style={{ marginTop: '0.5rem' }}>
+              <div className="mt-2">
                 <Markdown>{pr.body}</Markdown>
               </div>
             </details>
@@ -672,8 +663,8 @@ function PRReviewLoaded({
               renderAnnotation={(ann) => {
                 const meta = (ann as DiffLineAnnotation<InlineComment>).metadata!
                 return (
-                  <div style={inlineAnnotationStyle}>
-                    <div style={{ fontSize: 11, color: 'var(--fg-tertiary)' }}>
+                  <div className="bg-[rgba(255,224,138,0.55)] border border-[rgba(217,154,0,0.35)] rounded-md px-2.5 py-1.5 mx-2 my-1 text-[12.5px]">
+                    <div className="text-[11px] text-subtle">
                       {meta.author} · {new Date(meta.createdAt).toLocaleString()}
                     </div>
                     <Markdown compact>{meta.body}</Markdown>
@@ -682,9 +673,7 @@ function PRReviewLoaded({
               }}
             />
           ) : (
-            <div style={{ padding: '1rem', color: 'var(--fg-tertiary)' }}>
-              No diff to display
-            </div>
+            <div className="p-4 text-subtle">No diff to display</div>
           )}
         </section>
         </ResizablePanel>
@@ -711,67 +700,72 @@ function PRReviewLoaded({
         <>
         <ResizableHandle />
         <ResizablePanel defaultSize="20%" minSize="15%" maxSize="40%" className="overflow-hidden">
-        <aside style={conversationPaneStyle}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Conversation</h3>
-            <button
+        <aside className="w-full h-full px-3.5 py-3 flex flex-col gap-2 bg-sidebar overflow-hidden">
+          <div className="flex justify-between items-center">
+            <h3 className="m-0 text-[14px] font-semibold">Conversation</h3>
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => setConversationOpen(false)}
               title="Hide conversation"
-              className="ghost"
-              style={{ padding: '0 6px' }}
             >
               ×
-            </button>
+            </Button>
           </div>
-          <div style={{ overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <div className="overflow-auto flex flex-col gap-2">
             {conversation.length === 0 && inlineForFile.length === 0 && (
-              <div style={{ color: '#888', fontSize: '0.85rem' }}>No comments yet.</div>
+              <div className="text-subtle text-[12.5px]">No comments yet.</div>
             )}
             {conversation.map(c => (
-              <div key={`conv-${c.id}`} style={commentCardStyle}>
-                <div style={{ fontSize: 11, color: 'var(--fg-tertiary)' }}>
+              <CommentCard key={`conv-${c.id}`}>
+                <div className="text-[11px] text-subtle">
                   {c.author} · {new Date(c.createdAt).toLocaleString()}
                 </div>
                 <Markdown compact>{c.body}</Markdown>
-              </div>
+              </CommentCard>
             ))}
             {inlineForFile.length > 0 && (
-              <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: '#666', marginTop: '0.75rem' }}>
+              <div className="text-[11px] uppercase tracking-wide text-muted mt-3">
                 Inline on {selectedPath}
               </div>
             )}
             {inlineForFile.map(c => {
               const replies = repliesByParent.get(c.id) ?? []
               return (
-                <div key={`inline-${c.id}`} style={commentCardStyle}>
-                  <div style={{ fontSize: 11, color: 'var(--fg-tertiary)' }}>
+                <CommentCard key={`inline-${c.id}`}>
+                  <div className="text-[11px] text-subtle">
                     {c.author} · line {c.lineNumber} ({c.side === 'LEFT' ? 'old' : 'new'}) ·{' '}
                     {new Date(c.createdAt).toLocaleString()}
                   </div>
                   <Markdown compact>{c.body}</Markdown>
                   {pending && replies.length === 0 && (
-                    <button onClick={() => addReply(c)} style={{ alignSelf: 'flex-start', fontSize: '0.75rem' }}>
+                    <Button size="sm" onClick={() => addReply(c)} className="self-start">
                       Reply
-                    </button>
+                    </Button>
                   )}
                   {replies.map(reply => (
-                    <div key={reply.id} style={{ ...commentCardStyle, marginLeft: '0.75rem', background: '#f3f8ff' }}>
-                      <div style={{ fontSize: '0.7rem', color: '#666' }}>Your reply (pending)</div>
-                      <textarea
+                    <div
+                      key={reply.id}
+                      className="border border-hairline rounded-lg p-2 flex flex-col gap-1.5 bg-selected ml-3"
+                    >
+                      <div className="text-[11px] text-muted">Your reply (pending)</div>
+                      <Textarea
                         value={reply.body}
                         onChange={e => editComment(reply.id, { body: e.target.value })}
                         rows={2}
-                        style={{ width: '100%', fontSize: '0.8rem', resize: 'vertical' }}
+                        className="w-full text-[12px]"
                       />
-                      <button
+                      <Button
+                        size="sm"
+                        variant="ghost"
                         onClick={() => removeComment(reply.id)}
-                        style={{ alignSelf: 'flex-start', fontSize: '0.7rem' }}
+                        className="self-start"
                       >
                         Remove reply
-                      </button>
+                      </Button>
                     </div>
                   ))}
-                </div>
+                </CommentCard>
               )
             })}
           </div>
@@ -813,108 +807,98 @@ function PRReviewPanel({
 }) {
   const fresh = pending.lineComments.filter(c => c.inReplyToId == null)
   return (
-    <aside style={reviewPaneStyle}>
-      <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Pending PR review</h3>
+    <aside className="h-full w-full bg-sidebar p-3 flex flex-col gap-3 overflow-hidden">
+      <h3 className="m-0 text-[14px] font-semibold">Pending PR review</h3>
 
-      <button onClick={onAddComment} style={{ alignSelf: 'flex-start' }}>
+      <Button onClick={onAddComment} className="self-start">
         + Comment on {selectedPath || '(no file selected)'}
-      </button>
+      </Button>
 
-      <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      <div className="flex-1 overflow-auto flex flex-col gap-2">
         {fresh.length === 0 && (
-          <div style={{ color: '#888', fontSize: '0.85rem' }}>No new comments yet. Use Reply on existing threads or add new comments here.</div>
+          <div className="text-subtle text-[12.5px]">
+            No new comments yet. Use Reply on existing threads or add new comments here.
+          </div>
         )}
         {fresh.map(c => (
-          <div key={c.id} style={commentCardStyle}>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8rem' }}>
-              <code style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.path}:</code>
-              <input
+          <CommentCard key={c.id}>
+            <div className="flex gap-2 items-center text-[12px]">
+              <code className="flex-1 truncate">{c.path}:</code>
+              <Input
                 type="number"
                 min={1}
                 value={c.lineNumber}
                 onChange={e => onEditComment(c.id, { lineNumber: Number(e.target.value) })}
-                style={{ width: 60 }}
+                className="w-14"
               />
-              <select
+              <Select
                 value={c.side}
                 onChange={e => onEditComment(c.id, { side: e.target.value as 'old' | 'new' })}
               >
                 <option value="new">new</option>
                 <option value="old">old</option>
-              </select>
-              <button onClick={() => onRemoveComment(c.id)} title="Remove comment">×</button>
+              </Select>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onRemoveComment(c.id)}
+                title="Remove comment"
+              >
+                ×
+              </Button>
             </div>
-            <textarea
+            <Textarea
               value={c.body}
               onChange={e => onEditComment(c.id, { body: e.target.value })}
               rows={3}
-              style={{ width: '100%', fontSize: '0.85rem', resize: 'vertical' }}
+              className="w-full text-[12.5px]"
             />
-          </div>
+          </CommentCard>
         ))}
       </div>
 
-      <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-        <span style={{ fontSize: '0.8rem', color: '#666' }}>Summary</span>
-        <textarea
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-muted">Summary</span>
+        <Textarea
           value={pending.summary}
           onChange={e => onSummary(e.target.value)}
           rows={4}
           placeholder="Overall feedback…"
-          style={{ width: '100%', resize: 'vertical', fontSize: '0.85rem' }}
+          className="w-full text-[12.5px]"
         />
       </label>
 
-      <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-        <span style={{ fontSize: '0.8rem', color: '#666' }}>Submit as</span>
-        <select
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-muted">Submit as</span>
+        <Select
           value={pending.event ?? 'COMMENT'}
           onChange={e => onEvent(e.target.value as ReviewEvent)}
         >
           <option value="COMMENT">Comment</option>
           <option value="APPROVE">Approve</option>
           <option value="REQUEST_CHANGES">Request changes</option>
-        </select>
+        </Select>
       </label>
 
       {submitState.kind === 'error' && (
-        <div style={{ color: '#b00020', fontSize: '0.8rem' }}>Failed: {submitState.message}</div>
+        <div className="text-danger text-[12px]">Failed: {submitState.message}</div>
       )}
 
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
-        <button
-          className="primary"
+      <div className="flex gap-2">
+        <Button
+          variant="primary"
           onClick={onSubmit}
           disabled={submitState.kind === 'submitting'}
-          style={{ flex: 1 }}
+          className="flex-1"
         >
           {submitState.kind === 'submitting' ? 'Submitting…' : 'Submit review'}
-        </button>
-        <button onClick={onDiscard}>Discard</button>
+        </Button>
+        <Button onClick={onDiscard}>Discard</Button>
       </div>
     </aside>
   )
 }
 
-const inlineAnnotationStyle: React.CSSProperties = {
-  background: 'rgba(255, 224, 138, 0.55)',
-  border: '1px solid rgba(217, 154, 0, 0.35)',
-  borderRadius: 6,
-  padding: '0.45rem 0.6rem',
-  margin: '0.25rem 0.5rem',
-  fontSize: '12.5px'
-}
-
-const conversationPaneStyle: React.CSSProperties = {
-  width: '100%',
-  height: '100%',
-  padding: '0.85rem 0.9rem',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.5rem',
-  background: 'var(--bg-sidebar)',
-  overflow: 'hidden'
-}
 
 type InboxStatus =
   | { type: 'loading' }
@@ -962,20 +946,21 @@ function InboxView() {
   }, [])
 
   return (
-    <main style={shellStyle}>
-      <header className="titlebar-drag" style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
-        <span style={{ flex: 1 }}>
-          PR Inbox
+    <main className="h-screen flex flex-col bg-surface">
+      <TitleBar>
+        <span className="flex-1 truncate">
+          <span className="font-semibold text-fg">PR Inbox</span>
           {lastFetched && (
-            <span style={{ marginLeft: '0.75rem', color: '#888' }}>
+            <span className="ml-3 text-subtle">
               · updated {new Date(lastFetched).toLocaleTimeString()}
             </span>
           )}
         </span>
         <Button onClick={load}>Refresh</Button>
         <GhAuthIndicator />
-      </header>
-      <section style={{ flex: 1, overflow: 'auto', padding: '0.75rem 1rem' }}>
+        <HelpButton />
+      </TitleBar>
+      <section className="flex-1 overflow-auto px-4 py-3">
         <form
           onSubmit={e => {
             e.preventDefault()
@@ -988,9 +973,9 @@ function InboxView() {
             setUrlInput('')
             window.api.openPRReview(target)
           }}
-          style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}
+          className="flex gap-2 mb-4"
         >
-          <input
+          <Input
             type="text"
             value={urlInput}
             onChange={e => setUrlInput(e.target.value)}
@@ -999,10 +984,10 @@ function InboxView() {
           />
           <Button type="submit" variant="primary">Open</Button>
         </form>
-        {urlError && <div style={{ color: '#b00020', fontSize: '0.8rem', marginBottom: '0.5rem' }}>{urlError}</div>}
-        {status.type === 'loading' && <div style={{ color: '#888' }}>Loading…</div>}
+        {urlError && <div className="text-danger text-[12px] mb-2">{urlError}</div>}
+        {status.type === 'loading' && <div className="text-subtle">Loading…</div>}
         {status.type === 'error' && (
-          <div style={{ color: '#b00020' }}>Failed to load: {status.message}</div>
+          <div className="text-danger">Failed to load: {status.message}</div>
         )}
         {status.type === 'loaded' && (
           <>
@@ -1018,14 +1003,14 @@ function InboxView() {
 
 function InboxSection({ title, prs }: { title: string; prs: PullRequestSummary[] }) {
   return (
-    <div style={{ marginBottom: '1.25rem' }}>
-      <div className="section-label" style={{ padding: '0 0.25rem 0.35rem' }}>
-        {title} <span style={{ color: 'var(--fg-tertiary)', fontWeight: 400 }}>· {prs.length}</span>
+    <div className="mb-5">
+      <div className="section-label px-1 pb-1.5">
+        {title} <span className="text-subtle font-normal">· {prs.length}</span>
       </div>
       {prs.length === 0 ? (
-        <div style={{ color: 'var(--fg-tertiary)', fontSize: 12.5, padding: '0.2rem 0.7rem' }}>None.</div>
+        <div className="text-subtle text-[12.5px] px-2.5 py-0.5">None.</div>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <ul className="list-none p-0 m-0 flex flex-col gap-0.5">
           {prs.map(pr => (
             <li key={pr.id}>
               <PrRow pr={pr} />
@@ -1079,20 +1064,14 @@ const HELP_EVENT = 'dv:show-help'
 
 function HelpButton() {
   return (
-    <button
+    <Button
+      size="sm"
       onClick={() => window.dispatchEvent(new CustomEvent(HELP_EVENT))}
       title="Keyboard shortcuts (?)"
-      style={{
-        fontSize: '0.75rem',
-        padding: '0.05rem 0.5rem',
-        borderRadius: 999,
-        border: '1px solid #ccc',
-        background: '#fff',
-        cursor: 'pointer'
-      }}
+      className="rounded-full px-2"
     >
       ?
-    </button>
+    </Button>
   )
 }
 
@@ -1114,41 +1093,35 @@ function GhAuthIndicator() {
     }
   }, [])
 
-  if (!auth) return <span style={ghPillStyle('#aaa')}>gh: …</span>
+  const cls = 'cursor-help'
+
+  if (!auth) return <Badge className={cls}>gh: …</Badge>
 
   switch (auth.kind) {
     case 'authenticated':
-      return <span style={ghPillStyle('#2a8b3a')} title="GitHub CLI is authenticated">gh @{auth.user}</span>
+      return (
+        <Badge tone="success" className={cls} title="GitHub CLI is authenticated">
+          gh @{auth.user}
+        </Badge>
+      )
     case 'not-authenticated':
       return (
-        <span style={ghPillStyle('#b77400')} title="Run `gh auth login` in a terminal">
+        <Badge tone="warning" className={cls} title="Run `gh auth login` in a terminal">
           gh: not signed in
-        </span>
+        </Badge>
       )
     case 'gh-not-installed':
       return (
-        <span style={ghPillStyle('#b00020')} title="Install gh: https://cli.github.com">
+        <Badge tone="danger" className={cls} title="Install gh: https://cli.github.com">
           gh: not installed
-        </span>
+        </Badge>
       )
     case 'error':
       return (
-        <span style={ghPillStyle('#b00020')} title={auth.message}>
+        <Badge tone="danger" className={cls} title={auth.message}>
           gh: error
-        </span>
+        </Badge>
       )
-  }
-}
-
-function ghPillStyle(color: string): React.CSSProperties {
-  return {
-    fontSize: 11,
-    color,
-    border: `1px solid ${color}`,
-    padding: '1px 8px',
-    borderRadius: 999,
-    cursor: 'help',
-    whiteSpace: 'nowrap'
   }
 }
 
@@ -1209,6 +1182,8 @@ function LoadedView({
     [files, collapsedPaths]
   )
   const diffSectionRef = useRef<HTMLElement>(null)
+  const codeViewItemsRef = useRef(codeViewItems)
+  codeViewItemsRef.current = codeViewItems
   useEffect(() => {
     if (!selectedPath || !diffSectionRef.current) return
     setCollapsedPaths(prev => {
@@ -1217,14 +1192,14 @@ function LoadedView({
       next.delete(selectedPath)
       return next
     })
-    const idx = codeViewItems.findIndex(i => i.id === selectedPath)
-    if (idx < 0) return
     requestAnimationFrame(() => {
+      const idx = codeViewItemsRef.current.findIndex(i => i.id === selectedPath)
+      if (idx < 0) return
       const containers = diffSectionRef.current?.querySelectorAll('diffs-container')
       const target = containers?.[idx] as HTMLElement | undefined
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
-  }, [selectedPath, codeViewItems])
+  }, [selectedPath])
 
   const renderHeaderPrefix = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1324,24 +1299,29 @@ function LoadedView({
   useKeyboardShortcut(pending ? { key: 'Escape', handler: discardReview } : null)
 
   return (
-    <main style={shellStyle}>
-      <header className="titlebar-drag" style={{ ...statusBarStyle, display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
-        <span style={{ flex: 1 }}>
-          {repo} ({files.length} file{files.length === 1 ? '' : 's'})
+    <main className="h-screen flex flex-col bg-surface">
+      <TitleBar>
+        <span className="flex-1 truncate min-w-0">
+          <span className="text-fg">{repo}</span>{' '}
+          <span className="text-subtle">({files.length} file{files.length === 1 ? '' : 's'})</span>
           {pending && (
-            <span style={{ marginLeft: '0.75rem', color: '#888' }}>
-              · review in progress ({pending.lineComments.length} comment
-              {pending.lineComments.length === 1 ? '' : 's'})
+            <span className="ml-3 text-subtle">
+              · review in progress ({pending.lineComments.length} comment{pending.lineComments.length === 1 ? '' : 's'})
             </span>
           )}
         </span>
         {sourcePicker}
-        {!pending && <button className="primary" onClick={startReview}>Start review</button>}
+        {!pending && (
+          <Button variant="primary" onClick={startReview}>
+            Start review
+          </Button>
+        )}
         <GhAuthIndicator />
-      </header>
+        <HelpButton />
+      </TitleBar>
       <ResizablePanelGroup orientation="horizontal" id="local-panes" className="flex-1 min-h-0">
         <ResizablePanel defaultSize="20%" minSize="10%" maxSize="40%" className="overflow-hidden">
-          <aside style={treePaneStyle}>
+          <aside className="w-full h-full overflow-auto bg-sidebar py-1.5">
             <FileTree model={model} />
           </aside>
         </ResizablePanel>
@@ -1349,8 +1329,7 @@ function LoadedView({
         <ResizablePanel defaultSize={pending ? '55%' : '80%'} minSize="30%" className="overflow-hidden">
           <section
             ref={diffSectionRef}
-            className="diff-host"
-            style={{ width: '100%', height: '100%', overflow: 'auto' }}
+            className="diff-host w-full h-full overflow-auto"
           >
             {codeViewItems.length > 0 ? (
               <CodeView
@@ -1358,7 +1337,7 @@ function LoadedView({
                 renderHeaderPrefix={renderHeaderPrefix}
               />
             ) : (
-              <div style={{ padding: '1rem', color: 'var(--fg-tertiary)' }}>
+              <div className="p-4 text-subtle">
                 {selectedFile?.isBinary
                   ? 'Binary file — no diff preview'
                   : 'No diff to display'}
@@ -1411,121 +1390,83 @@ function ReviewPanel({
   onDiscard: () => void
 }) {
   return (
-    <aside style={reviewPaneStyle}>
-      <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Pending review</h3>
+    <aside className="h-full w-full bg-sidebar p-3 flex flex-col gap-3 overflow-hidden">
+      <h3 className="m-0 text-[14px] font-semibold">Pending review</h3>
 
-      <button onClick={onAddComment} style={{ alignSelf: 'flex-start' }}>
+      <Button onClick={onAddComment} className="self-start">
         + Comment on {selectedPath || '(no file selected)'}
-      </button>
+      </Button>
 
-      <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      <div className="flex-1 overflow-auto flex flex-col gap-2">
         {pending.lineComments.length === 0 && (
-          <div style={{ color: '#888', fontSize: '0.85rem' }}>No comments yet.</div>
+          <div className="text-subtle text-[12.5px]">No comments yet.</div>
         )}
         {pending.lineComments.map(c => (
-          <div key={c.id} style={commentCardStyle}>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8rem' }}>
-              <code style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {c.path}:
-              </code>
-              <input
+          <CommentCard key={c.id}>
+            <div className="flex gap-2 items-center text-[12px]">
+              <code className="flex-1 truncate">{c.path}:</code>
+              <Input
                 type="number"
                 min={1}
                 value={c.lineNumber}
                 onChange={e => onEditComment(c.id, { lineNumber: Number(e.target.value) })}
-                style={{ width: 60 }}
+                className="w-14"
               />
-              <select
+              <Select
                 value={c.side}
                 onChange={e => onEditComment(c.id, { side: e.target.value as 'old' | 'new' })}
               >
                 <option value="new">new</option>
                 <option value="old">old</option>
-              </select>
-              <button onClick={() => onRemoveComment(c.id)} title="Remove">
+              </Select>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onRemoveComment(c.id)}
+                title="Remove comment"
+              >
                 ×
-              </button>
+              </Button>
             </div>
-            <textarea
+            <Textarea
               value={c.body}
               onChange={e => onEditComment(c.id, { body: e.target.value })}
               placeholder="Comment body…"
               rows={3}
-              style={{ width: '100%', resize: 'vertical', fontSize: '0.85rem' }}
+              className="w-full text-[12.5px]"
             />
-          </div>
+          </CommentCard>
         ))}
       </div>
 
-      <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-        <span style={{ fontSize: '0.8rem', color: '#666' }}>Summary</span>
-        <textarea
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-muted">Summary</span>
+        <Textarea
           value={pending.summary}
           onChange={e => onSummaryChange(e.target.value)}
           rows={4}
           placeholder="Overall feedback for the agent…"
-          style={{ width: '100%', resize: 'vertical', fontSize: '0.85rem' }}
+          className="w-full text-[12.5px]"
         />
       </label>
 
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
-        <button className="primary" onClick={onSubmit} style={{ flex: 1 }}>
+      <div className="flex gap-2">
+        <Button variant="primary" onClick={onSubmit} className="flex-1">
           Submit to Agent (copy)
-        </button>
-        <button onClick={onRefresh} title="Re-snapshot the diff">↻</button>
-        <button onClick={onDiscard}>Discard</button>
+        </Button>
+        <Button variant="ghost" size="icon" onClick={onRefresh} title="Re-snapshot the diff">
+          ↻
+        </Button>
+        <Button onClick={onDiscard}>Discard</Button>
       </div>
     </aside>
   )
 }
 
-const shellStyle: React.CSSProperties = {
-  height: '100vh',
-  display: 'flex',
-  flexDirection: 'column',
-  background: 'var(--bg)'
-}
-
-// Header doubles as the draggable title-bar region. 78px left padding leaves
-// room for inset traffic lights on macOS.
-const statusBarStyle: React.CSSProperties = {
-  padding: '0.5rem 1rem 0.5rem 78px',
-  borderBottom: '1px solid var(--hairline)',
-  fontSize: '12.5px',
-  color: 'var(--fg-secondary)',
-  flexShrink: 0,
-  alignItems: 'center',
-  background: 'var(--bg)',
-  height: 38,
-  minHeight: 38,
-  boxSizing: 'border-box'
-}
-
-const treePaneStyle: React.CSSProperties = {
-  width: '100%',
-  height: '100%',
-  overflow: 'auto',
-  background: 'var(--bg-sidebar)',
-  padding: '0.4rem 0'
-}
-
-const reviewPaneStyle: React.CSSProperties = {
-  width: '100%',
-  height: '100%',
-  padding: '0.85rem 0.9rem',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.75rem',
-  background: 'var(--bg-sidebar)',
-  overflow: 'hidden'
-}
-
-const commentCardStyle: React.CSSProperties = {
-  border: '1px solid var(--hairline)',
-  borderRadius: 8,
-  padding: '0.55rem 0.6rem',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.4rem',
-  background: 'var(--bg-elevated)'
+function CommentCard({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="border border-hairline rounded-lg p-2 flex flex-col gap-1.5 bg-elevated">
+      {children}
+    </div>
+  )
 }
