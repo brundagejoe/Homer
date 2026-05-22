@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CodeView, CodeViewHandle } from '@pierre/diffs/react'
+import { CodeView } from '@pierre/diffs/react'
 import { processFile } from '@pierre/diffs'
 import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs'
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
+import { Markdown } from './Markdown'
 import type {
   AuthStatus,
   ConversationComment,
@@ -499,6 +500,7 @@ function PRReviewLoaded({
   }, [inline])
 
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set())
+  const [conversationOpen, setConversationOpen] = useState(true)
 
   const toggleCollapsed = useCallback((path: string) => {
     setCollapsedPaths(prev => {
@@ -519,23 +521,25 @@ function PRReviewLoaded({
     [files, annotationsByPath, collapsedPaths]
   )
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const codeViewRef = useRef<CodeViewHandle<any>>(null)
+  const totalThreads = conversation.length + inline.length
+
+  const diffSectionRef = useRef<HTMLElement>(null)
   useEffect(() => {
-    if (!selectedPath || !codeViewRef.current) return
+    if (!selectedPath || !diffSectionRef.current) return
     setCollapsedPaths(prev => {
       if (!prev.has(selectedPath)) return prev
       const next = new Set(prev)
       next.delete(selectedPath)
       return next
     })
-    codeViewRef.current.scrollTo({
-      type: 'item',
-      id: selectedPath,
-      align: 'start',
-      behavior: 'smooth'
+    const idx = codeViewItems.findIndex(i => i.id === selectedPath)
+    if (idx < 0) return
+    requestAnimationFrame(() => {
+      const containers = diffSectionRef.current?.querySelectorAll('diffs-container')
+      const target = containers?.[idx] as HTMLElement | undefined
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
-  }, [selectedPath])
+  }, [selectedPath, codeViewItems])
 
   const renderHeaderPrefix = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -582,16 +586,26 @@ function PRReviewLoaded({
           )}
         </span>
         {!pending && <button className="primary" onClick={startReview}>Start review</button>}
+        <button
+          onClick={() => setConversationOpen(o => !o)}
+          title={conversationOpen ? 'Hide conversation' : 'Show conversation'}
+          className="ghost"
+          style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+        >
+          💬{totalThreads > 0 ? ` ${totalThreads}` : ''}
+        </button>
         <StateBadge state={pr.state} />
         <GhAuthIndicator />
+        <HelpButton />
       </header>
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <aside style={treePaneStyle}>
           <FileTree model={model} />
         </aside>
         <section
+          ref={diffSectionRef}
           className="diff-host"
-          style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}
+          style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}
         >
           {pr.body && (
             <details
@@ -608,35 +622,26 @@ function PRReviewLoaded({
               >
                 Description
               </summary>
-              <pre
-                style={{
-                  whiteSpace: 'pre-wrap',
-                  fontFamily: 'inherit',
-                  margin: '0.5rem 0 0',
-                  fontSize: 13
-                }}
-              >
-                {pr.body}
-              </pre>
+              <div style={{ marginTop: '0.5rem' }}>
+                <Markdown>{pr.body}</Markdown>
+              </div>
             </details>
           )}
           {codeViewItems.length > 0 ? (
             <CodeView
-              ref={codeViewRef}
               items={codeViewItems}
-              style={{ flex: 1 }}
               renderHeaderPrefix={renderHeaderPrefix}
-              renderAnnotation={(ann) => (
-                <div style={inlineAnnotationStyle}>
-                  <div style={{ fontSize: 11, color: 'var(--fg-tertiary)' }}>
-                    {(ann as DiffLineAnnotation<InlineComment>).metadata!.author} ·{' '}
-                    {new Date((ann as DiffLineAnnotation<InlineComment>).metadata!.createdAt).toLocaleString()}
+              renderAnnotation={(ann) => {
+                const meta = (ann as DiffLineAnnotation<InlineComment>).metadata!
+                return (
+                  <div style={inlineAnnotationStyle}>
+                    <div style={{ fontSize: 11, color: 'var(--fg-tertiary)' }}>
+                      {meta.author} · {new Date(meta.createdAt).toLocaleString()}
+                    </div>
+                    <Markdown compact>{meta.body}</Markdown>
                   </div>
-                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 12.5 }}>
-                    {(ann as DiffLineAnnotation<InlineComment>).metadata!.body}
-                  </div>
-                </div>
-              )}
+                )
+              }}
             />
           ) : (
             <div style={{ padding: '1rem', color: 'var(--fg-tertiary)' }}>
@@ -658,18 +663,29 @@ function PRReviewLoaded({
             onDiscard={discard}
           />
         )}
+        {conversationOpen && (
         <aside style={conversationPaneStyle}>
-          <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Conversation</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Conversation</h3>
+            <button
+              onClick={() => setConversationOpen(false)}
+              title="Hide conversation"
+              className="ghost"
+              style={{ padding: '0 6px' }}
+            >
+              ×
+            </button>
+          </div>
           <div style={{ overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             {conversation.length === 0 && inlineForFile.length === 0 && (
               <div style={{ color: '#888', fontSize: '0.85rem' }}>No comments yet.</div>
             )}
             {conversation.map(c => (
               <div key={`conv-${c.id}`} style={commentCardStyle}>
-                <div style={{ fontSize: '0.75rem', color: '#888' }}>
+                <div style={{ fontSize: 11, color: 'var(--fg-tertiary)' }}>
                   {c.author} · {new Date(c.createdAt).toLocaleString()}
                 </div>
-                <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{c.body}</div>
+                <Markdown compact>{c.body}</Markdown>
               </div>
             ))}
             {inlineForFile.length > 0 && (
@@ -681,11 +697,11 @@ function PRReviewLoaded({
               const replies = repliesByParent.get(c.id) ?? []
               return (
                 <div key={`inline-${c.id}`} style={commentCardStyle}>
-                  <div style={{ fontSize: '0.75rem', color: '#888' }}>
+                  <div style={{ fontSize: 11, color: 'var(--fg-tertiary)' }}>
                     {c.author} · line {c.lineNumber} ({c.side === 'LEFT' ? 'old' : 'new'}) ·{' '}
                     {new Date(c.createdAt).toLocaleString()}
                   </div>
-                  <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{c.body}</div>
+                  <Markdown compact>{c.body}</Markdown>
                   {pending && replies.length === 0 && (
                     <button onClick={() => addReply(c)} style={{ alignSelf: 'flex-start', fontSize: '0.75rem' }}>
                       Reply
@@ -713,6 +729,7 @@ function PRReviewLoaded({
             })}
           </div>
         </aside>
+        )}
       </div>
     </main>
   )
@@ -1140,23 +1157,23 @@ function LoadedView({
     () => buildCodeViewItems(files, undefined, collapsedPaths),
     [files, collapsedPaths]
   )
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const codeViewRef = useRef<CodeViewHandle<any>>(null)
+  const diffSectionRef = useRef<HTMLElement>(null)
   useEffect(() => {
-    if (!selectedPath || !codeViewRef.current) return
+    if (!selectedPath || !diffSectionRef.current) return
     setCollapsedPaths(prev => {
       if (!prev.has(selectedPath)) return prev
       const next = new Set(prev)
       next.delete(selectedPath)
       return next
     })
-    codeViewRef.current.scrollTo({
-      type: 'item',
-      id: selectedPath,
-      align: 'start',
-      behavior: 'smooth'
+    const idx = codeViewItems.findIndex(i => i.id === selectedPath)
+    if (idx < 0) return
+    requestAnimationFrame(() => {
+      const containers = diffSectionRef.current?.querySelectorAll('diffs-container')
+      const target = containers?.[idx] as HTMLElement | undefined
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
-  }, [selectedPath])
+  }, [selectedPath, codeViewItems])
 
   const renderHeaderPrefix = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1275,12 +1292,14 @@ function LoadedView({
         <aside style={treePaneStyle}>
           <FileTree model={model} />
         </aside>
-        <section className="diff-host" style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+        <section
+          ref={diffSectionRef}
+          className="diff-host"
+          style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}
+        >
           {codeViewItems.length > 0 ? (
             <CodeView
-              ref={codeViewRef}
               items={codeViewItems}
-              style={{ height: '100%' }}
               renderHeaderPrefix={renderHeaderPrefix}
             />
           ) : (
