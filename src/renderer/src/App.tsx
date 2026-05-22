@@ -2,17 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { CodeView } from '@pierre/diffs/react'
 import { processFile } from '@pierre/diffs'
-import type { CodeViewDiffItem, CodeViewOptions, DiffLineAnnotation } from '@pierre/diffs'
+import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs'
+import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react'
 
 /**
- * Pierre's CodeView layout — only paddingBottom is tuned. Pierre uses
- * this as a margin-bottom on its internal container; the scroll bottoms
- * out at the last file plus this much breathing room.
+ * Shared className for Pierre's CodeView root, which IS the diff's
+ * scroll container. The padding-bottom is the trailing space below the
+ * last file. We rely on CSS padding (not Pierre's layout.paddingBottom,
+ * which it applies as a child margin) because padding on the scroll
+ * container is unambiguously part of scrollHeight per spec — so it
+ * survives any future layout/contain tweaks.
  */
-const CODE_VIEW_OPTIONS: CodeViewOptions<unknown> = {
-  layout: { paddingTop: 8, paddingBottom: 32, gap: 8 }
-}
-import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react'
+const CODE_VIEW_CLASS = 'flex-1 min-h-0 overflow-auto pb-24'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { usePersistedBoolean } from './usePersistedBoolean'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
@@ -733,8 +734,7 @@ function PRReviewLoaded({
           )}
           {codeViewItems.length > 0 ? (
             <CodeView
-              className="flex-1 min-h-0 overflow-auto"
-              options={CODE_VIEW_OPTIONS as CodeViewOptions<InlineComment>}
+              className={CODE_VIEW_CLASS}
               items={codeViewItems}
               renderHeaderPrefix={renderHeaderPrefix}
               renderAnnotation={(ann) => {
@@ -1485,8 +1485,7 @@ function LoadedView({
           >
             {codeViewItems.length > 0 ? (
               <CodeView
-                className="flex-1 min-h-0 overflow-auto"
-                options={CODE_VIEW_OPTIONS}
+                className={CODE_VIEW_CLASS}
                 items={codeViewItems}
                 renderHeaderPrefix={renderHeaderPrefix}
               />
