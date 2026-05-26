@@ -32,10 +32,12 @@ import {
   ResizableHandle
 } from '@/components/ui/resizable'
 import { TitleBar } from '@/components/TitleBar'
+import { cn } from '@/lib/utils'
 import type {
   AuthStatus,
   ConversationComment,
   DiffSourceSpec,
+  FileStatus,
   FileWithPatch,
   InboxResult,
   InlineComment,
@@ -332,6 +334,177 @@ function localReviewTarget(repoPath: string, source: DiffSourceSpec): ReviewTarg
   return { kind: 'local', repoPath, source }
 }
 
+/**
+ * Count added/removed lines in a unified-diff patch, skipping the
+ * +++/--- file headers (which also start with +/-).
+ */
+function diffStats(patch: string): { additions: number; deletions: number } {
+  let additions = 0
+  let deletions = 0
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('+') && !line.startsWith('+++')) additions++
+    else if (line.startsWith('-') && !line.startsWith('---')) deletions++
+  }
+  return { additions, deletions }
+}
+
+type ViewMode = 'conversation' | 'code'
+
+/**
+ * Segmented Conversation / Code switch for the title bar. The whole
+ * window is one or the other — Conversation holds the description and
+ * threads, Code holds the diff, tree, and review panel.
+ */
+function ViewModeToggle({ mode, onMode }: { mode: ViewMode; onMode: (m: ViewMode) => void }) {
+  const seg = (value: ViewMode, label: string) => (
+    <Tooltip content={`Show ${label.toLowerCase()}`} shortcut="⌘E">
+      <button
+        onClick={() => onMode(value)}
+        aria-pressed={mode === value}
+        className={cn(
+          'px-2.5 py-0.5 rounded-[6px] text-[12px] [-webkit-app-region:no-drag]',
+          mode === value ? 'bg-elevated text-fg shadow-sm' : 'text-muted hover:text-fg'
+        )}
+      >
+        {label}
+      </button>
+    </Tooltip>
+  )
+  return (
+    <div className="flex items-center gap-0.5 p-0.5 rounded-[8px] bg-hover">
+      {seg('conversation', 'Conversation')}
+      {seg('code', 'Code')}
+    </div>
+  )
+}
+
+/**
+ * File + line-change overview shown in Conversation view. Each row
+ * jumps to that file in Code view via onOpenFile.
+ */
+function CodeSummary({
+  files,
+  onOpenFile
+}: {
+  files: { path: string; patch: string; status?: FileStatus }[]
+  onOpenFile: (path: string) => void
+}) {
+  const rows = files.map(f => ({ path: f.path, status: f.status, ...diffStats(f.patch) }))
+  const totalAdd = rows.reduce((s, r) => s + r.additions, 0)
+  const totalDel = rows.reduce((s, r) => s + r.deletions, 0)
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="m-0 text-[14px] font-semibold">
+        Changes{' '}
+        <span className="text-subtle font-normal text-[12.5px]">
+          · {files.length} file{files.length === 1 ? '' : 's'} ·{' '}
+          <span className="text-success">+{totalAdd}</span>{' '}
+          <span className="text-danger">−{totalDel}</span>
+        </span>
+      </h3>
+      <ul className="list-none p-0 m-0 flex flex-col border border-hairline rounded-lg overflow-hidden">
+        {rows.map(r => (
+          <li key={r.path} className="border-b border-hairline last:border-b-0">
+            <button
+              onClick={() => onOpenFile(r.path)}
+              className="flex items-center justify-between gap-3 w-full px-3 py-1.5 text-left hover:bg-hover cursor-pointer [-webkit-app-region:no-drag]"
+            >
+              <span className="truncate font-mono text-[12px] text-fg">{r.path}</span>
+              <span className="shrink-0 tabular-nums text-[11.5px]">
+                <span className="text-success">+{r.additions}</span>{' '}
+                <span className="text-danger">−{r.deletions}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/**
+ * Full-width Conversation view: PR description, threads, inline
+ * comments, and the code summary. In Local Mode only the summary is
+ * present (no description or threads exist).
+ */
+function ConversationPane({
+  description,
+  conversation,
+  inline,
+  files,
+  onOpenFile
+}: {
+  description?: string
+  conversation?: ConversationComment[]
+  inline?: InlineComment[]
+  files: { path: string; patch: string; status?: FileStatus }[]
+  onOpenFile: (path: string) => void
+}) {
+  const hasDescription = description != null && description.trim() !== ''
+  const inlineByFile = useMemo(() => {
+    const map = new Map<string, InlineComment[]>()
+    for (const c of inline ?? []) {
+      const list = map.get(c.path) ?? []
+      list.push(c)
+      map.set(c.path, list)
+    }
+    return map
+  }, [inline])
+  return (
+    <section className="flex-1 min-h-0 overflow-auto bg-surface">
+      <div className="max-w-3xl mx-auto px-6 py-6 flex flex-col gap-6">
+        {hasDescription && (
+          <div className="flex flex-col gap-2">
+            <h3 className="m-0 text-[14px] font-semibold">Description</h3>
+            <Markdown>{description!}</Markdown>
+          </div>
+        )}
+        <CodeSummary files={files} onOpenFile={onOpenFile} />
+        {conversation && conversation.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <h3 className="m-0 text-[14px] font-semibold">Conversation</h3>
+            <div className="flex flex-col gap-2">
+              {conversation.map(c => (
+                <CommentCard key={`conv-${c.id}`}>
+                  <div className="text-[11px] text-subtle">
+                    {c.author} · {new Date(c.createdAt).toLocaleString()}
+                  </div>
+                  <Markdown compact>{c.body}</Markdown>
+                </CommentCard>
+              ))}
+            </div>
+          </div>
+        )}
+        {inlineByFile.size > 0 && (
+          <div className="flex flex-col gap-2">
+            <h3 className="m-0 text-[14px] font-semibold">Inline comments</h3>
+            {[...inlineByFile.entries()].map(([path, comments]) => (
+              <div key={path} className="flex flex-col gap-1.5">
+                <button
+                  onClick={() => onOpenFile(path)}
+                  className="self-start text-[11px] uppercase tracking-wide text-muted hover:text-fg cursor-pointer [-webkit-app-region:no-drag]"
+                >
+                  {path}
+                </button>
+                {comments.map(c => (
+                  <CommentCard key={`inline-${c.id}`}>
+                    <div className="text-[11px] text-subtle">
+                      {c.author} · line {formatLineRange(c.startLine, c.lineNumber)} (
+                      {c.side === 'LEFT' ? 'old' : 'new'}) ·{' '}
+                      {new Date(c.createdAt).toLocaleString()}
+                    </div>
+                    <Markdown compact>{c.body}</Markdown>
+                  </CommentCard>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export default function App() {
   const [helpOpen, setHelpOpen] = useState(false)
 
@@ -379,7 +552,7 @@ const SHORTCUT_HELP: ShortcutHelp[] = [
   { keys: '⌘↩', description: 'Submit the pending review' },
   { keys: 'Esc', description: 'Discard the pending review (with confirm)' },
   { keys: '⌘B', description: 'Toggle the file tree' },
-  { keys: '⌘E', description: 'Toggle the conversation panel (PR Review)' },
+  { keys: '⌘E', description: 'Switch between Conversation and Code view' },
   { keys: '⌘L', description: 'Toggle the review panel' },
   { keys: '↑ / ↓', description: 'Navigate the file tree (focus the tree first)' }
 ]
@@ -633,8 +806,11 @@ function PRReviewLoaded({
   })
   const selectedPaths = useFileTreeSelection(model)
   const selectedPath = selectedPaths[0] ?? paths[0]
-  const selectedFile = files.find(f => f.path === selectedPath)
-  const inlineForFile = inline.filter(c => c.path === selectedPath)
+
+  const openFile = (path: string) => {
+    model.getItem(path)?.select()
+    setCodeMode(true)
+  }
 
   const startReview = () => {
     const review: PendingReview = {
@@ -649,6 +825,7 @@ function PRReviewLoaded({
     setPending(review)
     window.api.reviewUpsert(review)
     setReviewPanelOpen(true)
+    setCodeMode(true)
   }
 
   const updatePending = (next: PendingReview) => {
@@ -826,7 +1003,7 @@ function PRReviewLoaded({
   useKeyboardShortcut(pending ? { key: 'Escape', handler: discard } : null)
 
   const [fileTreeOpen, setFileTreeOpen] = usePersistedBoolean('file-tree-open', true)
-  const [conversationOpen, setConversationOpen] = usePersistedBoolean('conversation-open', true)
+  const [codeMode, setCodeMode] = usePersistedBoolean('code-mode', true)
   const [reviewPanelOpen, setReviewPanelOpen] = usePersistedBoolean('review-panel-open', true)
 
   useKeyboardShortcut({
@@ -844,7 +1021,7 @@ function PRReviewLoaded({
     allowInForm: true,
     handler: e => {
       e.preventDefault()
-      setConversationOpen(v => !v)
+      setCodeMode(v => !v)
     }
   })
   useKeyboardShortcut({
@@ -920,8 +1097,6 @@ function PRReviewLoaded({
     [files, annotationsByPath, collapsedPaths]
   )
 
-  const totalThreads = conversation.length + inline.length
-
   const diffSectionRef = useRef<HTMLElement>(null)
   const codeViewItemsRef = useRef(codeViewItems)
   codeViewItemsRef.current = codeViewItems
@@ -970,29 +1145,29 @@ function PRReviewLoaded({
             </span>
           )}
         </span>
+        <ViewModeToggle
+          mode={codeMode ? 'code' : 'conversation'}
+          onMode={m => setCodeMode(m === 'code')}
+        />
         {!pending && (
           <Button variant="primary" onClick={startReview}>
             Start review
           </Button>
         )}
-        <Tooltip
-          content={conversationOpen ? 'Hide conversation' : 'Show conversation'}
-          shortcut="⌘E"
-        >
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setConversationOpen(o => !o)}
-            aria-label={conversationOpen ? 'Hide conversation' : 'Show conversation'}
-          >
-            💬{totalThreads > 0 ? ` ${totalThreads}` : ''}
-          </Button>
-        </Tooltip>
         <StateBadge state={pr.state} />
         <OpenOnGithubButton url={pr.url || prHtmlUrl(target)} />
         <GhAuthIndicator />
         <HelpButton />
       </TitleBar>
+      {!codeMode ? (
+        <ConversationPane
+          description={pr.body}
+          conversation={conversation}
+          inline={inline}
+          files={files}
+          onOpenFile={openFile}
+        />
+      ) : (
       <ResizablePanelGroup orientation="horizontal" id="pr-review-panes" className="flex-1 min-h-0">
         {fileTreeOpen && (
           <>
@@ -1009,16 +1184,6 @@ function PRReviewLoaded({
           ref={diffSectionRef}
           className="diff-host w-full h-full flex flex-col"
         >
-          {pr.body && (
-            <details open className="px-4 py-2 border-b border-hairline shrink-0 bg-surface">
-              <summary className="cursor-pointer text-muted text-[12.5px]">
-                Description
-              </summary>
-              <div className="mt-2">
-                <Markdown>{pr.body}</Markdown>
-              </div>
-            </details>
-          )}
           {codeViewItems.length > 0 ? (
             <CodeView<AnnotationMeta>
               ref={codeViewRef}
@@ -1110,57 +1275,8 @@ function PRReviewLoaded({
             </ResizablePanel>
           </>
         )}
-        {conversationOpen && (
-        <>
-        <ResizableHandle />
-        <ResizablePanel defaultSize="20%" minSize="15%" maxSize="40%" className="overflow-hidden">
-        <aside className="w-full h-full px-3.5 py-3 flex flex-col gap-2 bg-sidebar overflow-hidden">
-          <div className="flex justify-between items-center">
-            <h3 className="m-0 text-[14px] font-semibold">Conversation</h3>
-            <Tooltip content="Hide conversation">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setConversationOpen(false)}
-                aria-label="Hide conversation"
-              >
-                ×
-              </Button>
-            </Tooltip>
-          </div>
-          <div className="overflow-auto flex flex-col gap-2">
-            {conversation.length === 0 && inlineForFile.length === 0 && (
-              <div className="text-subtle text-[12.5px]">No comments yet.</div>
-            )}
-            {conversation.map(c => (
-              <CommentCard key={`conv-${c.id}`}>
-                <div className="text-[11px] text-subtle">
-                  {c.author} · {new Date(c.createdAt).toLocaleString()}
-                </div>
-                <Markdown compact>{c.body}</Markdown>
-              </CommentCard>
-            ))}
-            {inlineForFile.length > 0 && (
-              <div className="text-[11px] uppercase tracking-wide text-muted mt-3">
-                Inline on {selectedPath}
-              </div>
-            )}
-            {inlineForFile.map(c => (
-              <CommentCard key={`inline-${c.id}`}>
-                <div className="text-[11px] text-subtle">
-                  {c.author} · line {formatLineRange(c.startLine, c.lineNumber)} (
-                  {c.side === 'LEFT' ? 'old' : 'new'}) ·{' '}
-                  {new Date(c.createdAt).toLocaleString()}
-                </div>
-                <Markdown compact>{c.body}</Markdown>
-              </CommentCard>
-            ))}
-          </div>
-        </aside>
-        </ResizablePanel>
-        </>
-        )}
       </ResizablePanelGroup>
+      )}
     </main>
   )
 }
@@ -1668,6 +1784,7 @@ function LoadedView({
     setPending(review)
     window.api.reviewUpsert(review)
     setReviewPanelOpen(true)
+    setCodeMode(true)
   }
 
   const refreshSnapshot = async () => {
@@ -1819,6 +1936,12 @@ function LoadedView({
 
   const [fileTreeOpen, setFileTreeOpen] = usePersistedBoolean('file-tree-open', true)
   const [reviewPanelOpen, setReviewPanelOpen] = usePersistedBoolean('review-panel-open', true)
+  const [codeMode, setCodeMode] = usePersistedBoolean('code-mode', true)
+
+  const openFile = (path: string) => {
+    model.getItem(path)?.select()
+    setCodeMode(true)
+  }
 
   useKeyboardShortcut({
     key: 'b',
@@ -1827,6 +1950,15 @@ function LoadedView({
     handler: e => {
       e.preventDefault()
       setFileTreeOpen(v => !v)
+    }
+  })
+  useKeyboardShortcut({
+    key: 'e',
+    meta: true,
+    allowInForm: true,
+    handler: e => {
+      e.preventDefault()
+      setCodeMode(v => !v)
     }
   })
   useKeyboardShortcut({
@@ -1856,6 +1988,10 @@ function LoadedView({
           )}
         </span>
         {sourcePicker}
+        <ViewModeToggle
+          mode={codeMode ? 'code' : 'conversation'}
+          onMode={m => setCodeMode(m === 'code')}
+        />
         {!pending && (
           <Button variant="primary" onClick={startReview}>
             Start review
@@ -1864,6 +2000,9 @@ function LoadedView({
         <GhAuthIndicator />
         <HelpButton />
       </TitleBar>
+      {!codeMode ? (
+        <ConversationPane files={files} onOpenFile={openFile} />
+      ) : (
       <ResizablePanelGroup orientation="horizontal" id="local-panes" className="flex-1 min-h-0">
         {fileTreeOpen && (
           <>
@@ -1945,6 +2084,7 @@ function LoadedView({
           </>
         )}
       </ResizablePanelGroup>
+      )}
     </main>
   )
 }
