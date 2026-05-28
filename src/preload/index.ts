@@ -4,6 +4,7 @@ import { electronAPI } from '@electron-toolkit/preload'
 const REPO_PATH_FLAG = '--repo-path='
 const PR_FLAG = '--pr='
 const PURPOSE_FLAG = '--purpose='
+const LAUNCH_REPO_FLAG = '--launch-repo='
 
 const repoPathArg = process.argv.find(a => a.startsWith(REPO_PATH_FLAG))
 const repoPath = repoPathArg ? repoPathArg.slice(REPO_PATH_FLAG.length) : process.cwd()
@@ -21,6 +22,20 @@ const prTarget = prFlag
       return { owner, repo, number: Number(num) }
     })()
   : null
+/**
+ * The local repo this window was launched from, if any. Lets the inbox
+ * offer a jump back to that repo's local changes. Null when launched
+ * via a PR URL or with no repo.
+ */
+const launchRepoArg = process.argv.find(a => a.startsWith(LAUNCH_REPO_FLAG))
+const launchRepo = launchRepoArg ? launchRepoArg.slice(LAUNCH_REPO_FLAG.length) : null
+
+/** In-window navigation events pushed by the main process (a second
+ *  `dv` invocation focuses this window and navigates it in place). */
+export type NavRoute =
+  | { kind: 'inbox' }
+  | { kind: 'local'; repoPath: string }
+  | { kind: 'pr'; target: { owner: string; repo: string; number: number } }
 
 export type FileStatus = 'added' | 'modified' | 'deleted' | 'renamed'
 
@@ -156,6 +171,12 @@ const api = {
   repoPath,
   purpose,
   prTarget,
+  launchRepo,
+  onNavigate: (cb: (route: NavRoute) => void): (() => void) => {
+    const listener = (_e: unknown, route: NavRoute): void => cb(route)
+    ipcRenderer.on('app:navigate', listener)
+    return () => ipcRenderer.removeListener('app:navigate', listener)
+  },
   getLocalDiff: (repoPath: string, source?: DiffSourceSpec): Promise<LocalDiffResult> =>
     ipcRenderer.invoke('git:local-diff', { repoPath, source }),
   reviewGet: (target: ReviewTarget): Promise<PendingReview | null> =>
@@ -173,8 +194,7 @@ const api = {
   githubGetPRInlineComments: (t: PrTarget): Promise<InlineComment[]> =>
     ipcRenderer.invoke('github:get-pr-inline-comments', t),
   githubGetPRConversation: (t: PrTarget): Promise<ConversationComment[]> =>
-    ipcRenderer.invoke('github:get-pr-conversation', t),
-  openPRReview: (args: PrTarget): Promise<void> => ipcRenderer.invoke('window:open-pr-review', args)
+    ipcRenderer.invoke('github:get-pr-conversation', t)
 }
 
 export type DiffViewerApi = typeof api

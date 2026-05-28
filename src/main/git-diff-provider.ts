@@ -241,6 +241,22 @@ function gitArgsFor(source: DiffSourceSpec, includeNameStatus: boolean): DiffArg
 }
 
 export class GitDiffProvider {
+  /**
+   * Cheap probe for "does this repo have active changes" — used at
+   * launch to decide whether to land in the repo's Code view or fall
+   * back to the inbox. `git status --porcelain` lists tracked changes
+   * AND untracked files, matching what working-tree-vs-HEAD shows.
+   * Returns false if the path isn't a git repo (the command errors).
+   */
+  async hasChanges(repoPath: string): Promise<boolean> {
+    try {
+      const out = await git(repoPath, ['status', '--porcelain'])
+      return out.trim().length > 0
+    } catch {
+      return false
+    }
+  }
+
   async getRawPatch(repoPath: string, source: DiffSourceSpec): Promise<string> {
     const { args, includeUntracked } = gitArgsFor(source, false)
     const calls: Promise<string>[] = [git(repoPath, args)]

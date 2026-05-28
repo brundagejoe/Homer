@@ -7,12 +7,6 @@ import { toAgentPrompt, toGitHubReview } from './review-formatter'
 import { GhAuthResolver, AuthStatus } from './gh-auth-resolver'
 import { GitHubClient, InboxResult, OctokitLike, PullRequestDetails, InlineComment, ConversationComment } from './github-client'
 
-type OpenWindowFn = (target: { kind: 'pr-review'; owner: string; repo: string; number: number }) => void
-let openWindowFn: OpenWindowFn | null = null
-export function setOpenWindow(fn: OpenWindowFn): void {
-  openWindowFn = fn
-}
-
 export const CHANNELS = {
   getLocalDiff: 'git:local-diff',
   reviewGet: 'review:get',
@@ -25,8 +19,7 @@ export const CHANNELS = {
   githubGetPRDiff: 'github:get-pr-diff',
   githubGetPRInlineComments: 'github:get-pr-inline-comments',
   githubGetPRConversation: 'github:get-pr-conversation',
-  reviewSubmitToGithub: 'review:submit-to-github',
-  openPRReview: 'window:open-pr-review'
+  reviewSubmitToGithub: 'review:submit-to-github'
 } as const
 
 export interface FileWithPatch {
@@ -168,13 +161,6 @@ export function registerIpcHandlers(): void {
       const client = await getGithubClient()
       if (!client) throw new Error('gh CLI is not authenticated')
       return client.getPRConversation(args.owner, args.repo, args.number)
-    }
-  )
-
-  ipcMain.handle(
-    CHANNELS.openPRReview,
-    (_e, args: { owner: string; repo: string; number: number }) => {
-      if (openWindowFn) openWindowFn({ kind: 'pr-review', ...args })
     }
   )
 }

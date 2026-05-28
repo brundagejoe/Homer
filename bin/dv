@@ -1,8 +1,11 @@
 #!/bin/sh
-# dv — launch Diff Viewer for a git repo or a GitHub PR URL.
-#   dv                                 → opens local-mode for $PWD
-#   dv /path/to/repo                   → opens local-mode for that path
-#   dv https://github.com/o/r/pull/N   → opens that PR's review window
+# dv — launch Diff Viewer (single window; navigate between inbox, PRs,
+#      and local changes inside it).
+#   dv                                 → $PWD's code view if it has
+#                                        active changes, else the inbox
+#   dv /path/to/repo                   → that repo's changes, else inbox
+#   dv https://github.com/o/r/pull/N   → that PR
+# A second `dv` while a window is open focuses it and navigates in place.
 set -e
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 if [ ! -f "$APP_DIR/out/main/index.js" ]; then

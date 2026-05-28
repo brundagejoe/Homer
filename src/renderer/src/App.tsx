@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { CodeView, type CodeViewHandle } from '@pierre/diffs/react'
 import { processFile } from '@pierre/diffs'
@@ -41,6 +41,7 @@ import type {
   FileWithPatch,
   InboxResult,
   InlineComment,
+  NavRoute,
   PendingReview,
   PrTarget,
   PullRequestDetails,
@@ -505,8 +506,52 @@ function ConversationPane({
   )
 }
 
+/**
+ * Where the single window is currently pointed. The app navigates
+ * between these in place rather than spawning windows (ADR 0003).
+ */
+type Route =
+  | { kind: 'inbox' }
+  | { kind: 'local'; repoPath: string }
+  | { kind: 'pr'; target: PrTarget }
+
+interface Nav {
+  openInbox: () => void
+  openLocal: (repoPath: string) => void
+  openPR: (target: PrTarget) => void
+}
+
+const NavContext = createContext<Nav | null>(null)
+
+/** Navigation helpers for the single window. Available to any view. */
+function useNav(): Nav {
+  const nav = useContext(NavContext)
+  if (!nav) throw new Error('useNav used outside NavContext')
+  return nav
+}
+
+function initialRoute(): Route {
+  switch (window.api.purpose) {
+    case 'inbox':
+      return { kind: 'inbox' }
+    case 'pr-review':
+      return window.api.prTarget ? { kind: 'pr', target: window.api.prTarget } : { kind: 'inbox' }
+    case 'local':
+      return { kind: 'local', repoPath: window.api.repoPath }
+  }
+}
+
 export default function App() {
   const [helpOpen, setHelpOpen] = useState(false)
+  // `window.api` is undefined only in a broken preload; guard before
+  // using it for the initial route.
+  const hasApi = !!window.api
+  const [route, setRoute] = useState<Route>(() => (hasApi ? initialRoute() : { kind: 'inbox' }))
+  // The repo to offer "local changes" for from the inbox. Seeded from
+  // the launch and updated whenever we navigate into a local view.
+  const [localRepo, setLocalRepo] = useState<string | null>(
+    () => (hasApi ? window.api.launchRepo : null)
+  )
 
   useKeyboardShortcut({
     key: '?',
@@ -519,7 +564,28 @@ export default function App() {
     return () => window.removeEventListener(HELP_EVENT, onShow)
   }, [])
 
-  if (!window.api) {
+  // A second `dv` invocation focuses this window and pushes a route.
+  useEffect(() => {
+    if (!window.api?.onNavigate) return
+    return window.api.onNavigate((r: NavRoute) => {
+      if (r.kind === 'local') setLocalRepo(r.repoPath)
+      setRoute(r.kind === 'pr' ? { kind: 'pr', target: r.target } : r)
+    })
+  }, [])
+
+  const nav: Nav = useMemo(
+    () => ({
+      openInbox: () => setRoute({ kind: 'inbox' }),
+      openLocal: repoPath => {
+        setLocalRepo(repoPath)
+        setRoute({ kind: 'local', repoPath })
+      },
+      openPR: target => setRoute({ kind: 'pr', target })
+    }),
+    []
+  )
+
+  if (!hasApi) {
     return (
       <main className="h-screen flex flex-col bg-surface">
         <TitleBar>window.api is undefined</TitleBar>
@@ -528,21 +594,26 @@ export default function App() {
   }
 
   const view = (() => {
-    switch (window.api.purpose) {
+    switch (route.kind) {
       case 'inbox':
-        return <InboxView />
-      case 'pr-review':
-        return window.api.prTarget ? <PRReviewView target={window.api.prTarget} /> : <FatalError msg="PR target missing from launch args" />
+        return <InboxView localRepo={localRepo} />
+      case 'pr':
+        return (
+          <PRReviewView
+            key={`${route.target.owner}/${route.target.repo}/${route.target.number}`}
+            target={route.target}
+          />
+        )
       case 'local':
-        return <LocalRoot />
+        return <LocalRoot key={route.repoPath} repoPath={route.repoPath} />
     }
   })()
 
   return (
-    <>
+    <NavContext.Provider value={nav}>
       {view}
       {helpOpen && <HelpOverlay shortcuts={SHORTCUT_HELP} onClose={() => setHelpOpen(false)} />}
-    </>
+    </NavContext.Provider>
   )
 }
 
@@ -557,16 +628,25 @@ const SHORTCUT_HELP: ShortcutHelp[] = [
   { keys: '↑ / ↓', description: 'Navigate the file tree (focus the tree first)' }
 ]
 
-function FatalError({ msg }: { msg: string }) {
+/** Title-bar button that returns to the inbox from a PR or local view. */
+function InboxButton() {
+  const nav = useNav()
   return (
-    <main className="h-screen flex flex-col bg-surface">
-      <TitleBar>{msg}</TitleBar>
-    </main>
+    <Tooltip content="Back to inbox">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={nav.openInbox}
+        aria-label="Back to inbox"
+        className="[-webkit-app-region:no-drag]"
+      >
+        ‹ Inbox
+      </Button>
+    </Tooltip>
   )
 }
 
-function LocalRoot() {
-  const repo = window.api.repoPath
+function LocalRoot({ repoPath: repo }: { repoPath: string }) {
   const [source, setSource] = useState<DiffSourceSpec>(DEFAULT_SOURCE)
   const [status, setStatus] = useState<Status>({ type: 'loading' })
 
@@ -594,6 +674,7 @@ function LocalRoot() {
     return (
       <main className="h-screen flex flex-col bg-surface">
         <TitleBar>
+          <InboxButton />
           <span className="flex-1 truncate">
             {status.type === 'loading' && 'Loading…'}
             {status.type === 'empty' && `${status.repo} — no changes for this source`}
@@ -736,6 +817,7 @@ function PRReviewView({ target }: { target: PrTarget }) {
     return (
       <main className="h-screen flex flex-col bg-surface">
         <TitleBar>
+          <InboxButton />
           <span className="flex-1 truncate">
             {target.owner}/{target.repo}#{target.number}
             {status.type === 'loading' && ' — loading…'}
@@ -1131,6 +1213,7 @@ function PRReviewLoaded({
   return (
     <main className="h-screen flex flex-col bg-surface">
       <TitleBar>
+        <InboxButton />
         <span className="flex-1 truncate min-w-0">
           <span className="font-semibold">
             {target.owner}/{target.repo}#{pr.number}
@@ -1430,7 +1513,8 @@ function OpenOnGithubButton({ url }: { url: string }) {
  */
 const INBOX_AUTO_REFRESH_COOLDOWN_MS = 30_000
 
-function InboxView() {
+function InboxView({ localRepo }: { localRepo: string | null }) {
+  const nav = useNav()
   const [status, setStatus] = useState<InboxStatus>({ type: 'loading' })
   const [lastFetched, setLastFetched] = useState<number | null>(null)
   const [urlInput, setUrlInput] = useState('')
@@ -1484,6 +1568,17 @@ function InboxView() {
         <HelpButton />
       </TitleBar>
       <section className="flex-1 overflow-auto px-4 py-3">
+        {localRepo && (
+          <button
+            onClick={() => nav.openLocal(localRepo)}
+            className="flex items-center gap-2 w-full mb-4 px-3 py-2 text-left text-[12.5px] text-fg rounded-[7px] border border-hairline hover:bg-hover cursor-pointer [-webkit-app-region:no-drag]"
+          >
+            <span>📁</span>
+            <span className="truncate">
+              Local changes in <span className="font-medium">{localRepo}</span>
+            </span>
+          </button>
+        )}
         <form
           onSubmit={e => {
             e.preventDefault()
@@ -1494,7 +1589,7 @@ function InboxView() {
             }
             setUrlError('')
             setUrlInput('')
-            window.api.openPRReview(target)
+            nav.openPR(target)
           }}
           className="flex gap-2 mb-4"
         >
@@ -1546,9 +1641,10 @@ function InboxSection({ title, prs }: { title: string; prs: PullRequestSummary[]
 }
 
 function PrRow({ pr }: { pr: PullRequestSummary }) {
+  const nav = useNav()
   const onClick = () => {
     const [owner, repo] = pr.repo.split('/')
-    window.api.openPRReview({ owner, repo, number: pr.number })
+    nav.openPR({ owner, repo, number: pr.number })
   }
   return (
     <button
@@ -1978,6 +2074,7 @@ function LoadedView({
   return (
     <main className="h-screen flex flex-col bg-surface">
       <TitleBar>
+        <InboxButton />
         <span className="flex-1 truncate min-w-0">
           <span className="text-fg">{repo}</span>{' '}
           <span className="text-subtle">({files.length} file{files.length === 1 ? '' : 's'})</span>

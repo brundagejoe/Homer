@@ -1,39 +1,108 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { join, resolve } from 'node:path'
-import { registerIpcHandlers, setOpenWindow } from './ipc'
+import { registerIpcHandlers } from './ipc'
 import { parsePrUrl } from './pr-url'
+import { GitDiffProvider } from './git-diff-provider'
 import { WindowStateStore } from './window-state-store'
 
 const REPO_FLAG = '--repo-path='
 const PR_FLAG = '--pr='
 const PURPOSE_FLAG = '--purpose='
+const LAUNCH_REPO_FLAG = '--launch-repo='
 
-export type LaunchTarget =
+/** The route a launch resolves to — where the (single) window starts. */
+type LaunchRoute =
   | { kind: 'inbox' }
   | { kind: 'local'; repoPath: string }
   | { kind: 'pr-review'; owner: string; repo: string; number: number }
 
-function resolveLaunchTarget(argv: string[]): LaunchTarget {
+/** Renderer-facing navigation event shape (matches NavRoute in preload). */
+type NavRoute =
+  | { kind: 'inbox' }
+  | { kind: 'local'; repoPath: string }
+  | { kind: 'pr'; target: { owner: string; repo: string; number: number } }
+
+/**
+ * A launch resolves to a starting route plus the local repo (if any)
+ * the window was opened from. `repoPath` lets the inbox offer a jump
+ * back to that repo's local changes even when we start on the inbox.
+ */
+interface Launch {
+  route: LaunchRoute
+  repoPath: string | null
+}
+
+const provider = new GitDiffProvider()
+
+/**
+ * Decide where a launch lands. A PR URL/flag opens that PR. A repo path
+ * (explicit flag or positional) opens its Code view *only if it has
+ * active changes*; a clean repo falls back to the inbox. With nothing,
+ * the inbox.
+ */
+async function resolveLaunch(argv: string[]): Promise<Launch> {
   const prFlag = argv.find(a => a.startsWith(PR_FLAG))
   if (prFlag) {
     const [owner, repo, numStr] = prFlag.slice(PR_FLAG.length).split('/')
-    return { kind: 'pr-review', owner, repo, number: Number(numStr) }
+    return { route: { kind: 'pr-review', owner, repo, number: Number(numStr) }, repoPath: null }
   }
+
+  let repoPath: string | null = null
   const explicit = argv.find(a => a.startsWith(REPO_FLAG))
-  if (explicit) return { kind: 'local', repoPath: explicit.slice(REPO_FLAG.length) }
-  const positional = argv.slice(2).find(a => !a.startsWith('-') && !a.includes('app.asar'))
-  if (positional) {
-    const fromUrl = parsePrUrl(positional)
-    if (fromUrl) return { kind: 'pr-review', ...fromUrl }
-    return { kind: 'local', repoPath: resolve(positional) }
+  if (explicit) {
+    repoPath = explicit.slice(REPO_FLAG.length)
+  } else {
+    const positional = argv.slice(2).find(a => !a.startsWith('-') && !a.includes('app.asar'))
+    if (positional) {
+      const fromUrl = parsePrUrl(positional)
+      if (fromUrl) return { route: { kind: 'pr-review', ...fromUrl }, repoPath: null }
+      repoPath = resolve(positional)
+    }
   }
-  return { kind: 'inbox' }
+
+  if (repoPath && (await provider.hasChanges(repoPath))) {
+    return { route: { kind: 'local', repoPath }, repoPath }
+  }
+  return { route: { kind: 'inbox' }, repoPath: null }
 }
 
-let inboxWindow: BrowserWindow | null = null
-const localWindows = new Map<string, BrowserWindow>()
-const prWindows = new Map<string, BrowserWindow>()
+function toNavRoute(route: LaunchRoute): NavRoute {
+  switch (route.kind) {
+    case 'inbox':
+      return { kind: 'inbox' }
+    case 'local':
+      return { kind: 'local', repoPath: route.repoPath }
+    case 'pr-review':
+      return { kind: 'pr', target: { owner: route.owner, repo: route.repo, number: route.number } }
+  }
+}
+
+function buildLaunchArgs(launch: Launch): string[] {
+  const args: string[] = []
+  switch (launch.route.kind) {
+    case 'inbox':
+      args.push(`${PURPOSE_FLAG}inbox`)
+      break
+    case 'local':
+      args.push(`${PURPOSE_FLAG}local`, `${REPO_FLAG}${launch.route.repoPath}`)
+      break
+    case 'pr-review':
+      args.push(
+        `${PURPOSE_FLAG}pr-review`,
+        `${PR_FLAG}${launch.route.owner}/${launch.route.repo}/${launch.route.number}`
+      )
+      break
+  }
+  if (launch.repoPath) args.push(`${LAUNCH_REPO_FLAG}${launch.repoPath}`)
+  return args
+}
+
+/**
+ * The app owns exactly one window (ADR 0003). Navigation between the
+ * inbox, a PR, and local changes happens inside it.
+ */
+let mainWindow: BrowserWindow | null = null
 
 let windowStateStoreInstance: WindowStateStore | null = null
 function windowStateStore(): WindowStateStore {
@@ -66,56 +135,18 @@ function attachBoundsPersistence(win: BrowserWindow): void {
   })
 }
 
-function prKey(t: { owner: string; repo: string; number: number }): string {
-  return `${t.owner}/${t.repo}/${t.number}`
-}
+/**
+ * Open the single window, or — if it already exists — focus it and
+ * navigate it to the launch's route in place.
+ */
+async function openOrNavigate(argv: string[]): Promise<void> {
+  const launch = await resolveLaunch(argv)
 
-function focusExisting(target: LaunchTarget): boolean {
-  if (target.kind === 'inbox') {
-    if (inboxWindow && !inboxWindow.isDestroyed()) {
-      if (inboxWindow.isMinimized()) inboxWindow.restore()
-      inboxWindow.focus()
-      return true
-    }
-  } else if (target.kind === 'local') {
-    const w = localWindows.get(target.repoPath)
-    if (w && !w.isDestroyed()) {
-      if (w.isMinimized()) w.restore()
-      w.focus()
-      return true
-    }
-  } else {
-    const w = prWindows.get(prKey(target))
-    if (w && !w.isDestroyed()) {
-      if (w.isMinimized()) w.restore()
-      w.focus()
-      return true
-    }
-  }
-  return false
-}
-
-function openWindow(target: LaunchTarget): void {
-  if (focusExisting(target)) return
-
-  let additionalArguments: string[]
-  let title: string
-  switch (target.kind) {
-    case 'inbox':
-      additionalArguments = [`${PURPOSE_FLAG}inbox`]
-      title = 'Diff Viewer — Inbox'
-      break
-    case 'local':
-      additionalArguments = [`${PURPOSE_FLAG}local`, `${REPO_FLAG}${target.repoPath}`]
-      title = `Diff Viewer — ${target.repoPath}`
-      break
-    case 'pr-review':
-      additionalArguments = [
-        `${PURPOSE_FLAG}pr-review`,
-        `${PR_FLAG}${target.owner}/${target.repo}/${target.number}`
-      ]
-      title = `Diff Viewer — ${target.owner}/${target.repo}#${target.number}`
-      break
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+    mainWindow.webContents.send('app:navigate', toNavRoute(launch.route))
+    return
   }
 
   const bounds = windowStateStore().get()
@@ -126,35 +157,22 @@ function openWindow(target: LaunchTarget): void {
     y: bounds.y,
     show: false,
     autoHideMenuBar: true,
-    title,
+    title: 'Diff Viewer',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     backgroundColor: '#ffffff',
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
-      additionalArguments
+      additionalArguments: buildLaunchArgs(launch)
     }
   })
   attachBoundsPersistence(win)
 
-  if (target.kind === 'inbox') {
-    inboxWindow = win
-    win.on('closed', () => {
-      if (inboxWindow === win) inboxWindow = null
-    })
-  } else if (target.kind === 'local') {
-    localWindows.set(target.repoPath, win)
-    win.on('closed', () => {
-      if (localWindows.get(target.repoPath) === win) localWindows.delete(target.repoPath)
-    })
-  } else {
-    const key = prKey(target)
-    prWindows.set(key, win)
-    win.on('closed', () => {
-      if (prWindows.get(key) === win) prWindows.delete(key)
-    })
-  }
+  mainWindow = win
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
+  })
 
   win.on('ready-to-show', () => win.show())
   win.webContents.setWindowOpenHandler(details => {
@@ -173,7 +191,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', (_event, argv) => {
-    openWindow(resolveLaunchTarget(argv))
+    void openOrNavigate(argv)
   })
 
   app.whenReady().then(() => {
@@ -182,13 +200,12 @@ if (!app.requestSingleInstanceLock()) {
       optimizer.watchWindowShortcuts(window)
     })
 
-    setOpenWindow(openWindow)
     registerIpcHandlers()
-    openWindow(resolveLaunchTarget(process.argv))
+    void openOrNavigate(process.argv)
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        openWindow(resolveLaunchTarget(process.argv))
+        void openOrNavigate(process.argv)
       }
     })
   })

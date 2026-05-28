@@ -6,7 +6,7 @@ A fast, usable diff surface for reading code — whether the code is uncommitted
 
 - GitHub.com's PR UI is slow enough to be friction in daily review.
 - [Pierre](https://pierre.computer) makes the experience we want, but their product is a PR platform — our team is on GitHub and isn't moving, and Pierre doesn't do local diff review.
-- Their open-source rendering primitives ([`@pierre/diffs`](https://diffs.com), [`@pierre/trees`](https://trees.software)) are exactly what's missing. The rest of the app — gh auth, git operations, pending-review state, GitHub API, multi-window orchestration, CLI launcher — is built here.
+- Their open-source rendering primitives ([`@pierre/diffs`](https://diffs.com), [`@pierre/trees`](https://trees.software)) are exactly what's missing. The rest of the app — gh auth, git operations, pending-review state, GitHub API, window + navigation, CLI launcher — is built here.
 
 ## What it does
 
@@ -21,7 +21,7 @@ A Pending Review is a batched draft — all comments go out together, just like 
 - [`CONTEXT.md`](./CONTEXT.md) — canonical domain language. Read this first.
 - [`docs/adr/`](./docs/adr/) — load-bearing decisions:
   - [0001](./docs/adr/0001-snapshot-semantics-for-pending-reviews.md) — Pending Reviews use diff-snapshot semantics, not content-anchoring.
-  - [0002](./docs/adr/0002-multi-window-one-purpose.md) — Multi-window architecture, one purpose per window.
+  - [0003](./docs/adr/0003-single-window-with-in-app-navigation.md) — Single window with in-app navigation; one `dv` command.
 
 ## Stack
 
@@ -40,11 +40,12 @@ A Pending Review is a batched draft — all comments go out together, just like 
 ```sh
 bun install
 bun run build
-bin/dv                                 # local mode for $PWD
-bin/dv /path/to/repo                   # local mode for that path
-bin/dv https://github.com/o/r/pull/N   # PR review window
-bin/dv-inbox                           # PR Inbox window
+bin/dv                                 # $PWD's changes, else the inbox
+bin/dv /path/to/repo                   # that repo's changes, else inbox
+bin/dv https://github.com/o/r/pull/N   # that PR
 ```
+
+One window, one command: navigate between the inbox, PRs, and local changes inside it. A second `dv` focuses the open window and navigates it in place.
 
 For development: `bun run dev` (electron-vite dev server with hot reload).
 

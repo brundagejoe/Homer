@@ -29,13 +29,13 @@ The thing being reviewed — the source of the diff content. In scope for V0: wo
 A scrubber UX that walks a branch commit-by-commit, updating the diff as you move through history. Use case is satisfied in V0 by opening an old PR.
 
 **Window**:
-A single-purpose surface owned by the app. Each **Window** is scoped to exactly one of: the **PR Inbox**, a local repo (the cwd from a CLI launch), or a single **Review** in progress. Multiple **Windows** are expected to be open simultaneously.
+The single surface owned by the app (ADR 0003). It navigates in place between three **Views** — the **PR Inbox**, a **PR Review**, and **Local Mode** — with an "‹ Inbox" back affordance. Where it starts depends on the CLI launch (see **Local Mode**). A second CLI invocation focuses this **Window** and navigates it rather than opening another.
 
 **PR Inbox**:
-A multi-repo list of GitHub PRs the user is involved in, organized into "Mine," "Review requested," and "Recently merged." Polls on focus and every 60s while focused.
+A **View** showing a multi-repo list of GitHub PRs the user is involved in, organized into "Mine," "Review requested," and "Recently merged." Polls on focus and every 60s while focused. When launched from a repo, also offers a jump to that repo's **Local Mode**.
 
 **Local Mode**:
-A **Window** scoped to a single repo, opened by invoking the app's CLI from a terminal in that repo's working directory. Does not browse other repos.
+A **View** scoped to a single repo — the cwd from a CLI launch. Diffs that repo against the working tree, a branch base, or arbitrary refs; does not browse other repos. `dv` lands here when the launch repo has active changes, otherwise on the **PR Inbox**.
 
 **GitHub Auth**:
 Delegated to the `gh` CLI — the app shells out to it for tokens and API calls. The app must surface an explicit status (authenticated as @user / `gh` not installed / `gh` not authenticated) so the user understands the dependency.
@@ -55,9 +55,10 @@ Delegated to the `gh` CLI — the app shells out to it for tokens and API calls.
 ## V0 Scope
 
 **In:**
-- **PR Inbox** window with three sections (Mine / Review requested / Recently merged), poll-on-focus + 60s
-- **PR Review** window: Pierre diffs + tree, read description and existing threads, draft **Pending Review** with **Line Comments** + summary + replies to existing threads, submit as approve/request-changes/comment
-- **Local Mode** window: diff source picker (working tree, branch vs base, arbitrary refs), **Diff Snapshot** on review start, submit to **Agent** **Destination** via clipboard
+- Single **Window** with in-app navigation between the three **Views** below (ADR 0003); one `dv` command
+- **PR Inbox** view with three sections (Mine / Review requested / Recently merged), poll-on-focus + 60s
+- **PR Review** view: Pierre diffs + tree, read description and existing threads, draft **Pending Review** with **Line Comments** + summary + replies to existing threads, submit as approve/request-changes/comment
+- **Local Mode** view: diff source picker (working tree, branch vs base, arbitrary refs), **Diff Snapshot** on review start, submit to **Agent** **Destination** via clipboard
 - `gh` CLI auth with explicit status indicator
 - Keyboard shortcuts for next/prev file, next/prev hunk, add comment, submit review
 - Tooltips on non-obvious UI
