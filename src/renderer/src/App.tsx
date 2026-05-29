@@ -808,7 +808,7 @@ function PRReviewLoaded({
 
   // PR files carry no binary flag; they're all text patches from GitHub.
   const codeFiles = useMemo(() => files.map(f => ({ ...f, isBinary: false })), [files])
-  const shell = useReviewSurfaceShell({ files: codeFiles, annotationsByPath, model, selectedPath, draft })
+  const shell = useReviewSurfaceShell({ files: codeFiles, annotationsByPath, model, selectedPath, codeViewRef, draft })
   const { openFile, startReview, startDraft, codeMode, setCodeMode, fileTreeOpen, reviewPanelOpen } = shell
 
   type Destination = 'github' | 'agent'
@@ -1413,7 +1413,7 @@ function LoadedView({
     [pending, editingComments]
   )
 
-  const shell = useReviewSurfaceShell({ files, annotationsByPath, model, selectedPath, draft })
+  const shell = useReviewSurfaceShell({ files, annotationsByPath, model, selectedPath, codeViewRef, draft })
   const { openFile, startReview, startDraft, codeMode, setCodeMode, fileTreeOpen, reviewPanelOpen } = shell
 
   const refreshSnapshot = async () => {

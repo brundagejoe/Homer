@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type Ref, type RefObject } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { CodeView, type CodeViewHandle } from '@pierre/diffs/react'
 import { processFile } from '@pierre/diffs'
@@ -139,9 +139,10 @@ export function useReviewSurfaceShell(args: {
   annotationsByPath: Map<string, DiffLineAnnotation<AnnotationMeta>[]>
   model: FileTreeModel
   selectedPath: string | undefined
+  codeViewRef: RefObject<CodeViewHandle<AnnotationMeta> | null>
   draft: UseReviewDraft
 }): ReviewSurfaceShell {
-  const { files, annotationsByPath, model, selectedPath, draft } = args
+  const { files, annotationsByPath, model, selectedPath, codeViewRef, draft } = args
   const pending = draft.pending
 
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set())
@@ -160,24 +161,28 @@ export function useReviewSurfaceShell(args: {
   )
 
   const diffSectionRef = useRef<HTMLElement>(null)
-  const codeViewItemsRef = useRef(codeViewItems)
-  codeViewItemsRef.current = codeViewItems
   useEffect(() => {
-    if (!selectedPath || !diffSectionRef.current) return
+    if (!selectedPath) return
     setCollapsedPaths(prev => {
       if (!prev.has(selectedPath)) return prev
       const next = new Set(prev)
       next.delete(selectedPath)
       return next
     })
+    // CodeView is virtualized — only on-screen files have DOM nodes, so
+    // we can't locate the target by querying/indexing rendered elements.
+    // Pierre's own scrollTo resolves the file by item id against its
+    // virtual layout. rAF lets the items prop flush (e.g. after the
+    // un-collapse above) before we ask it to scroll.
     requestAnimationFrame(() => {
-      const idx = codeViewItemsRef.current.findIndex(i => i.id === selectedPath)
-      if (idx < 0) return
-      const containers = diffSectionRef.current?.querySelectorAll('diffs-container')
-      const target = containers?.[idx] as HTMLElement | undefined
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      codeViewRef.current?.scrollTo({
+        type: 'item',
+        id: selectedPath,
+        align: 'start',
+        behavior: 'smooth'
+      })
     })
-  }, [selectedPath])
+  }, [selectedPath, codeViewRef])
 
   const renderHeaderPrefix = useCallback(
     (item: { id: string }) => (
