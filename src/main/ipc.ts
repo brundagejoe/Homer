@@ -6,6 +6,7 @@ import { PendingReviewStore, PendingReview, ReviewTarget } from './pending-revie
 import { toAgentPrompt, toGitHubReview } from './review-formatter'
 import { GhAuthResolver, AuthStatus } from './gh-auth-resolver'
 import { GitHubClient, InboxResult, OctokitLike, PullRequestDetails, InlineComment, ConversationComment } from './github-client'
+import { splitPatchByFile } from '../shared/split-patch'
 
 export const CHANNELS = {
   getLocalDiff: 'git:local-diff',
@@ -54,25 +55,6 @@ function store(): PendingReviewStore {
   return storeInstance
 }
 
-export function splitPatchByFile(rawPatch: string): Map<string, string> {
-  const map = new Map<string, string>()
-  if (!rawPatch.trim()) return map
-  const lines = rawPatch.split('\n')
-  let start = -1
-  for (let i = 0; i <= lines.length; i++) {
-    const isBoundary = i === lines.length || lines[i].startsWith('diff --git ')
-    if (!isBoundary) continue
-    if (start >= 0) {
-      const slice = lines.slice(start, i).join('\n')
-      const match = lines[start].match(/^diff --git a\/(.+?) b\/(.+)$/)
-      const path = match ? match[2] : `__file_${map.size}`
-      map.set(path, slice)
-    }
-    start = i
-  }
-  return map
-}
-
 export function registerIpcHandlers(): void {
   ipcMain.handle(
     CHANNELS.getLocalDiff,
@@ -82,7 +64,7 @@ export function registerIpcHandlers(): void {
         provider.getDiff(args.repoPath, source),
         provider.getRawPatch(args.repoPath, source)
       ])
-      const patches = splitPatchByFile(rawPatch)
+      const patches = new Map(splitPatchByFile(rawPatch).map(p => [p.path, p.patch]))
       return {
         files: data.files.map(f => ({
           path: f.path,

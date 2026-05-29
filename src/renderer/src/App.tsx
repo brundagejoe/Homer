@@ -1,21 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
-import { CodeView, type CodeViewHandle } from '@pierre/diffs/react'
-import { processFile } from '@pierre/diffs'
-import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs'
-import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react'
-
-/**
- * Shared className for Pierre's CodeView root, which IS the diff's
- * scroll container. The padding-bottom is the trailing space below the
- * last file. We rely on CSS padding (not Pierre's layout.paddingBottom,
- * which it applies as a child margin) because padding on the scroll
- * container is unambiguously part of scrollHeight per spec — so it
- * survives any future layout/contain tweaks.
- */
-const CODE_VIEW_CLASS = 'flex-1 min-h-0 overflow-auto pb-24'
+import { ExternalLink } from 'lucide-react'
+import { type CodeViewHandle } from '@pierre/diffs/react'
+import { useFileTree, useFileTreeSelection } from '@pierre/trees/react'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
-import { usePersistedBoolean } from './usePersistedBoolean'
+import { useReviewDraft } from './useReviewDraft'
+import type { AnchorSpec, Editing } from './review-draft'
+import { type AnnotationMeta, buildAnnotationMap } from './diff-annotations'
+import { splitPatchByFile } from '../../shared/split-patch'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
 import { Markdown } from './Markdown'
 import { Button } from '@/components/ui/button'
@@ -26,16 +17,13 @@ import { Select } from '@/components/ui/select'
 import { toast } from '@/components/ui/toast'
 import { Tooltip } from '@/components/ui/tooltip'
 import { confirm } from '@/components/ui/alert-dialog'
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle
-} from '@/components/ui/resizable'
+import { ReviewSurface, useReviewSurfaceShell } from './ReviewSurface'
 import { TitleBar } from '@/components/TitleBar'
 import { cn } from '@/lib/utils'
 import type {
   AuthStatus,
   ConversationComment,
+  DiffSnapshot,
   DiffSourceSpec,
   FileStatus,
   FileWithPatch,
@@ -57,16 +45,13 @@ type Status =
   | { type: 'loaded'; repo: string; files: FileWithPatch[] }
   | { type: 'error'; message: string }
 
-/**
- * Annotation payload for Pierre. Existing threads come from GitHub and
- * render read-only; pending comments are local drafts that render as an
- * editable composer. Both kinds anchor to a (path, lineNumber, side).
- */
-type AnnotationMeta =
-  | { kind: 'existing'; comment: InlineComment }
-  | { kind: 'pending'; comment: LineComment }
-
 const DEFAULT_SOURCE: DiffSourceSpec = { type: 'working-tree-vs-head' }
+
+/** The comments being drafted fresh (not yet committed to the Pending
+ *  Review). They need annotation slots so the inline composer renders. */
+function draftComments(editing: ReadonlyMap<string, Editing>): LineComment[] {
+  return [...editing.values()].filter(e => e.isNew).map(e => e.comment)
+}
 
 /**
  * Produces a Pierre Tree sort comparator that orders entries by their
@@ -93,90 +78,9 @@ function useDiffOrderSort(paths: readonly string[]) {
   }, [paths])
 }
 
-type Annotator<T> = (path: string) => DiffLineAnnotation<T>[] | undefined
-
-interface AnchorSpec {
-  lineNumber: number
-  side: 'old' | 'new'
-  startLineNumber?: number
-  startSide?: 'old' | 'new'
-}
-
 /** "12-18" if multi-line, "12" otherwise. */
 function formatLineRange(start: number | undefined, end: number): string {
   return start != null && start !== end ? `${start}-${end}` : `${end}`
-}
-
-/**
- * Normalize Pierre's SelectedLineRange (which may be reverse-ordered
- * if the user drags upward) into an AnchorSpec keyed to last line +
- * last side, with startLineNumber/startSide set only when the
- * selection actually covers more than one line.
- */
-function specFromRange(range: {
-  start: number
-  end: number
-  side?: 'deletions' | 'additions'
-  endSide?: 'deletions' | 'additions'
-}): AnchorSpec {
-  const sideStart = range.side === 'deletions' ? 'old' : 'new'
-  const sideEnd = (range.endSide ?? range.side) === 'deletions' ? 'old' : 'new'
-  const ascending = range.start <= range.end
-  const firstLine = ascending ? range.start : range.end
-  const lastLine = ascending ? range.end : range.start
-  const firstSide = ascending ? sideStart : sideEnd
-  const lastSide = ascending ? sideEnd : sideStart
-  const isMulti = firstLine !== lastLine || firstSide !== lastSide
-  return {
-    lineNumber: lastLine,
-    side: lastSide,
-    ...(isMulti ? { startLineNumber: firstLine, startSide: firstSide } : {})
-  }
-}
-
-function buildCodeViewItems<T>(
-  files: { path: string; patch: string; isBinary: boolean }[],
-  annotationsFor?: Annotator<T>,
-  collapsedPaths?: ReadonlySet<string>
-): CodeViewDiffItem<T>[] {
-  const items: CodeViewDiffItem<T>[] = []
-  for (const f of files) {
-    if (f.isBinary || !f.patch) continue
-    const fileDiff = processFile(f.patch)
-    if (!fileDiff) continue
-    const collapsed = collapsedPaths?.has(f.path) ?? false
-    const annotations = annotationsFor?.(f.path)
-    items.push({
-      id: f.path,
-      type: 'diff',
-      fileDiff,
-      annotations,
-      collapsed,
-      // Pierre keeps a cached snapshot per item and re-syncs only when
-      // `version` changes (see syncItemRecord in @pierre/diffs). It
-      // must change whenever collapse state OR the annotation list
-      // changes — otherwise newly-added pending comments silently get
-      // swallowed by the cached snapshot.
-      version: (collapsed ? 1 : 0) + (annotations?.length ?? 0) * 2
-    })
-  }
-  return items
-}
-
-function ChevronToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
-  const Icon = collapsed ? ChevronRight : ChevronDown
-  const label = collapsed ? 'Expand file' : 'Collapse file'
-  return (
-    <Tooltip content={label}>
-      <button
-        onClick={onToggle}
-        aria-label={label}
-        className="inline-flex items-center justify-center w-4 h-4 p-0 m-0 appearance-none bg-transparent border-0 rounded-none shadow-none text-subtle hover:text-fg hover:bg-hover/60 [-webkit-app-region:no-drag]"
-      >
-        <Icon size={12} strokeWidth={2.4} />
-      </button>
-    </Tooltip>
-  )
 }
 
 /**
@@ -802,7 +706,7 @@ function PRReviewView({ target }: { target: PrTarget }) {
     ])
       .then(([pr, rawDiff, inline, conversation]) => {
         if (cancelled) return
-        const files = splitDiffByFile(rawDiff)
+        const files = splitPatchByFile(rawDiff)
         setStatus({ type: 'loaded', pr, files, inline, conversation })
       })
       .catch((err: Error) => {
@@ -834,25 +738,6 @@ function PRReviewView({ target }: { target: PrTarget }) {
   return <PRReviewLoaded {...status} target={target} />
 }
 
-function splitDiffByFile(raw: string): { path: string; patch: string }[] {
-  if (!raw.trim()) return []
-  const out: { path: string; patch: string }[] = []
-  const lines = raw.split('\n')
-  let start = -1
-  for (let i = 0; i <= lines.length; i++) {
-    const boundary = i === lines.length || lines[i].startsWith('diff --git ')
-    if (!boundary) continue
-    if (start >= 0) {
-      const slice = lines.slice(start, i).join('\n')
-      const match = lines[start].match(/^diff --git a\/(.+?) b\/(.+)$/)
-      const path = match ? match[2] : `file-${out.length}`
-      out.push({ path, patch: slice })
-    }
-    start = i
-  }
-  return out
-}
-
 function PRReviewLoaded({
   target,
   pr,
@@ -871,12 +756,23 @@ function PRReviewLoaded({
     [target.owner, target.repo, target.number]
   )
 
-  const [pending, setPending] = useState<PendingReview | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const codeViewRef = useRef<CodeViewHandle<AnnotationMeta>>(null)
 
-  useEffect(() => {
-    window.api.reviewGet(reviewTarget).then(setPending)
-  }, [reviewTarget])
+  const buildSnapshot = useCallback(
+    (): DiffSnapshot => ({
+      files: files.map(f => ({ ...f, status: 'modified' as const, isBinary: false, oldPath: undefined }))
+    }),
+    [files]
+  )
+
+  const draft = useReviewDraft({
+    target: reviewTarget,
+    buildSnapshot,
+    defaultEvent: 'COMMENT',
+    onAfterCommit: () => codeViewRef.current?.clearSelectedLines()
+  })
+  const { pending } = draft
 
   const paths = useMemo(() => files.map(f => f.path), [files])
   const sortByDiffOrder = useDiffOrderSort(paths)
@@ -889,153 +785,31 @@ function PRReviewLoaded({
   const selectedPaths = useFileTreeSelection(model)
   const selectedPath = selectedPaths[0] ?? paths[0]
 
-  const openFile = (path: string) => {
-    model.getItem(path)?.select()
-    setCodeMode(true)
-  }
+  const startEdit = draft.startEdit
+  const updateEditBody = draft.updateBody
+  const submitEdit = draft.commit
+  const cancelEdit = draft.cancel
+  const removeFromPending = draft.remove
+  const setSummary = draft.setSummary
+  const setEvent = draft.setEvent
+  const editingComments = draft.editing
 
-  const startReview = () => {
-    const review: PendingReview = {
-      target: reviewTarget,
-      snapshot: { files: files.map(f => ({ ...f, status: 'modified', isBinary: false, oldPath: undefined })) },
-      lineComments: [],
-      summary: '',
-      event: 'COMMENT',
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    }
-    setPending(review)
-    window.api.reviewUpsert(review)
-    setReviewPanelOpen(true)
-    setCodeMode(true)
-  }
+  // New drafts (not yet added to pending) also need an annotation slot
+  // so the editor can render at the right line.
+  const annotationsByPath = useMemo(
+    () =>
+      buildAnnotationMap({
+        existing: inline,
+        pending: pending?.lineComments,
+        drafts: draftComments(editingComments)
+      }),
+    [inline, pending, editingComments]
+  )
 
-  const updatePending = (next: PendingReview) => {
-    setPending(next)
-    window.api.reviewUpsert(next)
-  }
-
-  /**
-   * Append a draft line comment, starting a Pending Review on the fly
-   * if one doesn't exist yet. Same entry point for fresh comments
-   * (from the gutter `+`) and replies (from the existing-thread card).
-   */
-  /**
-   * Inline editing state. Lives in component state, NOT in the pending
-   * review on disk — drafts that the user cancels never get persisted,
-   * and edits to existing comments are buffered here until the user
-   * clicks Add review comment.
-   */
-  type Editing = { comment: LineComment; isNew: boolean }
-  const [editingComments, setEditingComments] = useState<Map<string, Editing>>(new Map())
-  const codeViewRef = useRef<CodeViewHandle<AnnotationMeta>>(null)
-
-  const startDraft = (spec: {
-    path: string
-    anchor: AnchorSpec
-    inReplyToId?: number
-  }) => {
-    const id = crypto.randomUUID()
-    const comment: LineComment = {
-      id,
-      path: spec.path,
-      lineNumber: spec.anchor.lineNumber,
-      side: spec.anchor.side,
-      ...(spec.anchor.startLineNumber != null ? { startLineNumber: spec.anchor.startLineNumber } : {}),
-      ...(spec.anchor.startSide != null ? { startSide: spec.anchor.startSide } : {}),
-      body: '',
-      ...(spec.inReplyToId != null ? { inReplyToId: spec.inReplyToId } : {})
-    }
-    setEditingComments(prev => new Map(prev).set(id, { comment, isNew: true }))
-    setReviewPanelOpen(true)
-  }
-
-  const startEdit = (commentId: string) => {
-    const existing = pending?.lineComments.find(c => c.id === commentId)
-    if (!existing) return
-    setEditingComments(prev =>
-      new Map(prev).set(commentId, { comment: { ...existing }, isNew: false })
-    )
-  }
-
-  const updateEditBody = (id: string, body: string) => {
-    setEditingComments(prev => {
-      const e = prev.get(id)
-      if (!e) return prev
-      const next = new Map(prev)
-      next.set(id, { ...e, comment: { ...e.comment, body } })
-      return next
-    })
-  }
-
-  const submitEdit = (id: string) => {
-    const edit = editingComments.get(id)
-    if (!edit) return
-    if (edit.isNew) {
-      if (pending) {
-        updatePending({
-          ...pending,
-          lineComments: [...pending.lineComments, edit.comment],
-          updatedAt: Date.now()
-        })
-      } else {
-        const review: PendingReview = {
-          target: reviewTarget,
-          snapshot: { files: files.map(f => ({ ...f, status: 'modified', isBinary: false, oldPath: undefined })) },
-          lineComments: [edit.comment],
-          summary: '',
-          event: 'COMMENT',
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        }
-        setPending(review)
-        window.api.reviewUpsert(review)
-        setReviewPanelOpen(true)
-      }
-    } else {
-      if (!pending) return
-      updatePending({
-        ...pending,
-        lineComments: pending.lineComments.map(c => (c.id === id ? edit.comment : c)),
-        updatedAt: Date.now()
-      })
-    }
-    setEditingComments(prev => {
-      const next = new Map(prev)
-      next.delete(id)
-      return next
-    })
-    codeViewRef.current?.clearSelectedLines()
-  }
-
-  const cancelEdit = (id: string) => {
-    setEditingComments(prev => {
-      const next = new Map(prev)
-      next.delete(id)
-      return next
-    })
-    codeViewRef.current?.clearSelectedLines()
-  }
-
-  const removeFromPending = (id: string) => {
-    if (!pending) return
-    updatePending({
-      ...pending,
-      lineComments: pending.lineComments.filter(c => c.id !== id),
-      updatedAt: Date.now()
-    })
-    cancelEdit(id)
-  }
-
-  const setSummary = (summary: string) => {
-    if (!pending) return
-    updatePending({ ...pending, summary, updatedAt: Date.now() })
-  }
-
-  const setEvent = (event: ReviewEvent) => {
-    if (!pending) return
-    updatePending({ ...pending, event, updatedAt: Date.now() })
-  }
+  // PR files carry no binary flag; they're all text patches from GitHub.
+  const codeFiles = useMemo(() => files.map(f => ({ ...f, isBinary: false })), [files])
+  const shell = useReviewSurfaceShell({ files: codeFiles, annotationsByPath, model, selectedPath, draft })
+  const { openFile, startReview, startDraft, codeMode, setCodeMode, fileTreeOpen, reviewPanelOpen } = shell
 
   type Destination = 'github' | 'agent'
   const [destination, setDestination] = useState<Destination>('github')
@@ -1046,14 +820,14 @@ function PRReviewLoaded({
     try {
       if (destination === 'github') {
         const { url } = await window.api.reviewSubmitToGithub(pending)
-        setPending(null)
+        draft.markSubmitted()
         toast.success('Review submitted', {
           actionLabel: 'Open on GitHub',
           onAction: () => window.open(url, '_blank', 'noreferrer')
         })
       } else {
         await window.api.reviewSubmitToAgent(pending)
-        setPending(null)
+        draft.markSubmitted()
         toast.success('Copied to clipboard', { timeout: 3000 })
       }
     } catch (err) {
@@ -1076,139 +850,12 @@ function PRReviewLoaded({
       destructive: true
     })
     if (!ok) return
-    await window.api.reviewDelete(reviewTarget)
-    setPending(null)
+    draft.discard()
   }
 
   useKeyboardShortcut(pending ? null : { key: 'r', handler: startReview })
   useKeyboardShortcut(pending ? { key: 'Enter', meta: true, allowInForm: true, handler: submit } : null)
   useKeyboardShortcut(pending ? { key: 'Escape', handler: discard } : null)
-
-  const [fileTreeOpen, setFileTreeOpen] = usePersistedBoolean('file-tree-open', true)
-  const [codeMode, setCodeMode] = usePersistedBoolean('code-mode', true)
-  const [reviewPanelOpen, setReviewPanelOpen] = usePersistedBoolean('review-panel-open', true)
-
-  useKeyboardShortcut({
-    key: 'b',
-    meta: true,
-    allowInForm: true,
-    handler: e => {
-      e.preventDefault()
-      setFileTreeOpen(v => !v)
-    }
-  })
-  useKeyboardShortcut({
-    key: 'e',
-    meta: true,
-    allowInForm: true,
-    handler: e => {
-      e.preventDefault()
-      setCodeMode(v => !v)
-    }
-  })
-  useKeyboardShortcut({
-    key: 'l',
-    meta: true,
-    allowInForm: true,
-    handler: e => {
-      e.preventDefault()
-      if (!pending) {
-        startReview()
-      } else {
-        setReviewPanelOpen(v => !v)
-      }
-    }
-  })
-
-  const annotationsByPath = useMemo(() => {
-    const map = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>()
-    for (const c of inline) {
-      const list = map.get(c.path) ?? []
-      list.push({
-        side: c.side === 'LEFT' ? 'deletions' : 'additions',
-        lineNumber: c.lineNumber,
-        metadata: { kind: 'existing', comment: c }
-      })
-      map.set(c.path, list)
-    }
-    if (pending) {
-      for (const c of pending.lineComments) {
-        const list = map.get(c.path) ?? []
-        list.push({
-          side: c.side === 'old' ? 'deletions' : 'additions',
-          lineNumber: c.lineNumber,
-          metadata: { kind: 'pending', comment: c }
-        })
-        map.set(c.path, list)
-      }
-    }
-    // New drafts (not yet added to pending) also need an annotation slot
-    // so the editor can render at the right line.
-    for (const edit of editingComments.values()) {
-      if (!edit.isNew) continue
-      const c = edit.comment
-      const list = map.get(c.path) ?? []
-      list.push({
-        side: c.side === 'old' ? 'deletions' : 'additions',
-        lineNumber: c.lineNumber,
-        metadata: { kind: 'pending', comment: c }
-      })
-      map.set(c.path, list)
-    }
-    return map
-  }, [inline, pending, editingComments])
-
-  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set())
-
-  const toggleCollapsed = useCallback((path: string) => {
-    setCollapsedPaths(prev => {
-      const next = new Set(prev)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
-  }, [])
-
-  const codeViewItems = useMemo(
-    () =>
-      buildCodeViewItems<AnnotationMeta>(
-        files.map(f => ({ ...f, isBinary: false })),
-        p => annotationsByPath.get(p),
-        collapsedPaths
-      ),
-    [files, annotationsByPath, collapsedPaths]
-  )
-
-  const diffSectionRef = useRef<HTMLElement>(null)
-  const codeViewItemsRef = useRef(codeViewItems)
-  codeViewItemsRef.current = codeViewItems
-  useEffect(() => {
-    if (!selectedPath || !diffSectionRef.current) return
-    setCollapsedPaths(prev => {
-      if (!prev.has(selectedPath)) return prev
-      const next = new Set(prev)
-      next.delete(selectedPath)
-      return next
-    })
-    requestAnimationFrame(() => {
-      const idx = codeViewItemsRef.current.findIndex(i => i.id === selectedPath)
-      if (idx < 0) return
-      const containers = diffSectionRef.current?.querySelectorAll('diffs-container')
-      const target = containers?.[idx] as HTMLElement | undefined
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
-  }, [selectedPath])
-
-  const renderHeaderPrefix = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (item: any) => (
-      <ChevronToggle
-        collapsed={collapsedPaths.has(item.id)}
-        onToggle={() => toggleCollapsed(item.id)}
-      />
-    ),
-    [collapsedPaths, toggleCollapsed]
-  )
 
   return (
     <main className="h-screen flex flex-col bg-surface">
@@ -1251,100 +898,70 @@ function PRReviewLoaded({
           onOpenFile={openFile}
         />
       ) : (
-      <ResizablePanelGroup orientation="horizontal" id="pr-review-panes" className="flex-1 min-h-0">
-        {fileTreeOpen && (
-          <>
-            <ResizablePanel defaultSize="18%" minSize="10%" maxSize="40%" className="overflow-hidden">
-              <aside className="w-full h-full overflow-auto bg-sidebar py-1.5">
-                <FileTree model={model} />
-              </aside>
-            </ResizablePanel>
-            <ResizableHandle />
-          </>
-        )}
-        <ResizablePanel defaultSize="60%" minSize="30%" className="overflow-hidden">
-        <section
-          ref={diffSectionRef}
-          className="diff-host w-full h-full flex flex-col"
-        >
-          {codeViewItems.length > 0 ? (
-            <CodeView<AnnotationMeta>
-              ref={codeViewRef}
-              className={CODE_VIEW_CLASS}
-              items={codeViewItems}
-              renderHeaderPrefix={renderHeaderPrefix}
-              options={{
-                enableGutterUtility: true,
-                // Show the highlighted range while the user drags from
-                // the gutter +. Without this the drag-select still
-                // works data-wise, but there's no visual cue so it
-                // feels like dragging does nothing.
-                enableLineSelection: true,
-                onGutterUtilityClick: (range, ctx) => {
-                  startDraft({
-                    path: ctx.item.id,
-                    anchor: specFromRange(range)
-                  })
-                }
-              }}
-              renderAnnotation={ann => {
-                const meta = ann.metadata!
-                if (meta.kind === 'existing') {
-                  const replyDraftId = meta.comment.id
-                  const hasReply =
-                    (pending?.lineComments ?? []).some(c => c.inReplyToId === replyDraftId) ||
-                    Array.from(editingComments.values()).some(
-                      e => e.isNew && e.comment.inReplyToId === replyDraftId
-                    )
-                  return (
-                    <ExistingThreadAnnotation
-                      comment={meta.comment}
-                      hasReply={hasReply}
-                      onReply={() =>
-                        startDraft({
-                          path: meta.comment.path,
-                          anchor: {
-                            lineNumber: meta.comment.lineNumber,
-                            side: meta.comment.side === 'LEFT' ? 'old' : 'new'
-                          },
-                          inReplyToId: meta.comment.id
-                        })
-                      }
-                    />
-                  )
-                }
-                const id = meta.comment.id
-                const editing = editingComments.get(id)
-                if (editing) {
-                  return (
-                    <PendingCommentEditor
-                      comment={editing.comment}
-                      onChange={body => updateEditBody(id, body)}
-                      onSubmit={() => submitEdit(id)}
-                      onCancel={() => cancelEdit(id)}
-                    />
-                  )
-                }
-                const submitted = pending?.lineComments.find(c => c.id === id)
-                if (!submitted) return null
-                return (
-                  <PendingCommentCard
-                    comment={submitted}
-                    onEdit={() => startEdit(id)}
-                    onDelete={() => removeFromPending(id)}
-                  />
+        <ReviewSurface
+          panesId="pr-review-panes"
+          model={model}
+          fileTreeOpen={fileTreeOpen}
+          treeSize="18%"
+          diffSize="60%"
+          panelSize="22%"
+          codeViewRef={codeViewRef}
+          diffSectionRef={shell.diffSectionRef}
+          items={shell.codeViewItems}
+          renderHeaderPrefix={shell.renderHeaderPrefix}
+          enableLineSelection
+          onGutterDraft={startDraft}
+          emptyState="No diff to display"
+          renderAnnotation={ann => {
+            const meta = ann.metadata!
+            if (meta.kind === 'existing') {
+              const replyDraftId = meta.comment.id
+              const hasReply =
+                (pending?.lineComments ?? []).some(c => c.inReplyToId === replyDraftId) ||
+                Array.from(editingComments.values()).some(
+                  e => e.isNew && e.comment.inReplyToId === replyDraftId
                 )
-              }}
-            />
-          ) : (
-            <div className="p-4 text-subtle">No diff to display</div>
-          )}
-        </section>
-        </ResizablePanel>
-        {pending && reviewPanelOpen && (
-          <>
-            <ResizableHandle />
-            <ResizablePanel defaultSize="22%" minSize="15%" maxSize="45%" className="overflow-hidden">
+              return (
+                <ExistingThreadAnnotation
+                  comment={meta.comment}
+                  hasReply={hasReply}
+                  onReply={() =>
+                    startDraft({
+                      path: meta.comment.path,
+                      anchor: {
+                        lineNumber: meta.comment.lineNumber,
+                        side: meta.comment.side === 'LEFT' ? 'old' : 'new'
+                      },
+                      inReplyToId: meta.comment.id
+                    })
+                  }
+                />
+              )
+            }
+            const id = meta.comment.id
+            const editing = editingComments.get(id)
+            if (editing) {
+              return (
+                <PendingCommentEditor
+                  comment={editing.comment}
+                  onChange={body => updateEditBody(id, body)}
+                  onSubmit={() => submitEdit(id)}
+                  onCancel={() => cancelEdit(id)}
+                />
+              )
+            }
+            const submitted = pending?.lineComments.find(c => c.id === id)
+            if (!submitted) return null
+            return (
+              <PendingCommentCard
+                comment={submitted}
+                onEdit={() => startEdit(id)}
+                onDelete={() => removeFromPending(id)}
+              />
+            )
+          }}
+          reviewPanel={
+            pending && reviewPanelOpen ? (
               <PRReviewPanel
                 pending={pending}
                 submitting={submitting}
@@ -1355,10 +972,9 @@ function PRReviewLoaded({
                 onSubmit={submit}
                 onDiscard={discard}
               />
-            </ResizablePanel>
-          </>
-        )}
-      </ResizablePanelGroup>
+            ) : null
+          }
+        />
       )}
     </main>
   )
@@ -1758,14 +1374,16 @@ function LoadedView({
   sourcePicker: React.ReactNode
 }) {
   const target = useMemo(() => localReviewTarget(repo, source), [repo, sourceKey(source)])
-  const [pending, setPending] = useState<PendingReview | null>(null)
-  type Editing = { comment: LineComment; isNew: boolean }
-  const [editingComments, setEditingComments] = useState<Map<string, Editing>>(new Map())
   const codeViewRef = useRef<CodeViewHandle<AnnotationMeta>>(null)
 
-  useEffect(() => {
-    window.api.reviewGet(target).then(setPending)
-  }, [target])
+  const buildSnapshot = useCallback((): DiffSnapshot => ({ files: liveFiles }), [liveFiles])
+  const draft = useReviewDraft({
+    target,
+    buildSnapshot,
+    onAfterCommit: () => codeViewRef.current?.clearSelectedLines()
+  })
+  const { pending } = draft
+  const editingComments = draft.editing
 
   // Snapshot semantics (ADR 0001): when a review is pending, show the snapshot,
   // not the live working tree. The live diff is only used to seed a new review.
@@ -1790,98 +1408,13 @@ function LoadedView({
   const selectedPath = selectedPaths[0] ?? paths[0]
   const selectedFile = files.find(f => f.path === selectedPath)
 
-  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set())
-
-  const toggleCollapsed = useCallback((path: string) => {
-    setCollapsedPaths(prev => {
-      const next = new Set(prev)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
-  }, [])
-
-  const annotationsByPath = useMemo(() => {
-    const map = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>()
-    if (pending) {
-      for (const c of pending.lineComments) {
-        const list = map.get(c.path) ?? []
-        list.push({
-          side: c.side === 'old' ? 'deletions' : 'additions',
-          lineNumber: c.lineNumber,
-          metadata: { kind: 'pending', comment: c }
-        })
-        map.set(c.path, list)
-      }
-    }
-    for (const edit of editingComments.values()) {
-      if (!edit.isNew) continue
-      const c = edit.comment
-      const list = map.get(c.path) ?? []
-      list.push({
-        side: c.side === 'old' ? 'deletions' : 'additions',
-        lineNumber: c.lineNumber,
-        metadata: { kind: 'pending', comment: c }
-      })
-      map.set(c.path, list)
-    }
-    return map
-  }, [pending, editingComments])
-
-  const codeViewItems = useMemo(
-    () =>
-      buildCodeViewItems<AnnotationMeta>(
-        files,
-        p => annotationsByPath.get(p),
-        collapsedPaths
-      ),
-    [files, annotationsByPath, collapsedPaths]
-  )
-  const diffSectionRef = useRef<HTMLElement>(null)
-  const codeViewItemsRef = useRef(codeViewItems)
-  codeViewItemsRef.current = codeViewItems
-  useEffect(() => {
-    if (!selectedPath || !diffSectionRef.current) return
-    setCollapsedPaths(prev => {
-      if (!prev.has(selectedPath)) return prev
-      const next = new Set(prev)
-      next.delete(selectedPath)
-      return next
-    })
-    requestAnimationFrame(() => {
-      const idx = codeViewItemsRef.current.findIndex(i => i.id === selectedPath)
-      if (idx < 0) return
-      const containers = diffSectionRef.current?.querySelectorAll('diffs-container')
-      const target = containers?.[idx] as HTMLElement | undefined
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
-  }, [selectedPath])
-
-  const renderHeaderPrefix = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (item: any) => (
-      <ChevronToggle
-        collapsed={collapsedPaths.has(item.id)}
-        onToggle={() => toggleCollapsed(item.id)}
-      />
-    ),
-    [collapsedPaths, toggleCollapsed]
+  const annotationsByPath = useMemo(
+    () => buildAnnotationMap({ pending: pending?.lineComments, drafts: draftComments(editingComments) }),
+    [pending, editingComments]
   )
 
-  const startReview = () => {
-    const review: PendingReview = {
-      target,
-      snapshot: { files: liveFiles },
-      lineComments: [],
-      summary: '',
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    }
-    setPending(review)
-    window.api.reviewUpsert(review)
-    setReviewPanelOpen(true)
-    setCodeMode(true)
-  }
+  const shell = useReviewSurfaceShell({ files, annotationsByPath, model, selectedPath, draft })
+  const { openFile, startReview, startDraft, codeMode, setCodeMode, fileTreeOpen, reviewPanelOpen } = shell
 
   const refreshSnapshot = async () => {
     if (!pending) return
@@ -1893,120 +1426,21 @@ function LoadedView({
     })
     if (!ok) return
     const { files: fresh } = await window.api.getLocalDiff(repo)
-    updatePending({ ...pending, snapshot: { files: fresh }, updatedAt: Date.now() })
+    draft.refresh({ files: fresh })
   }
 
-  const updatePending = (next: PendingReview) => {
-    setPending(next)
-    window.api.reviewUpsert(next)
-  }
-
-  /**
-   * Inline editing state — see PRReviewLoaded for the rationale. Drafts
-   * are buffered here until the user clicks Add review comment, at
-   * which point they're persisted into the pending review.
-   */
-  const startDraft = (spec: { path: string; anchor: AnchorSpec }) => {
-    const id = crypto.randomUUID()
-    const comment: LineComment = {
-      id,
-      path: spec.path,
-      lineNumber: spec.anchor.lineNumber,
-      side: spec.anchor.side,
-      ...(spec.anchor.startLineNumber != null ? { startLineNumber: spec.anchor.startLineNumber } : {}),
-      ...(spec.anchor.startSide != null ? { startSide: spec.anchor.startSide } : {}),
-      body: ''
-    }
-    setEditingComments(prev => new Map(prev).set(id, { comment, isNew: true }))
-    setReviewPanelOpen(true)
-  }
-
-  const startEdit = (commentId: string) => {
-    const existing = pending?.lineComments.find(c => c.id === commentId)
-    if (!existing) return
-    setEditingComments(prev =>
-      new Map(prev).set(commentId, { comment: { ...existing }, isNew: false })
-    )
-  }
-
-  const updateEditBody = (id: string, body: string) => {
-    setEditingComments(prev => {
-      const e = prev.get(id)
-      if (!e) return prev
-      const next = new Map(prev)
-      next.set(id, { ...e, comment: { ...e.comment, body } })
-      return next
-    })
-  }
-
-  const submitEdit = (id: string) => {
-    const edit = editingComments.get(id)
-    if (!edit) return
-    if (edit.isNew) {
-      if (pending) {
-        updatePending({
-          ...pending,
-          lineComments: [...pending.lineComments, edit.comment],
-          updatedAt: Date.now()
-        })
-      } else {
-        const review: PendingReview = {
-          target,
-          snapshot: { files: liveFiles },
-          lineComments: [edit.comment],
-          summary: '',
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        }
-        setPending(review)
-        window.api.reviewUpsert(review)
-        setReviewPanelOpen(true)
-      }
-    } else {
-      if (!pending) return
-      updatePending({
-        ...pending,
-        lineComments: pending.lineComments.map(c => (c.id === id ? edit.comment : c)),
-        updatedAt: Date.now()
-      })
-    }
-    setEditingComments(prev => {
-      const next = new Map(prev)
-      next.delete(id)
-      return next
-    })
-    codeViewRef.current?.clearSelectedLines()
-  }
-
-  const cancelEdit = (id: string) => {
-    setEditingComments(prev => {
-      const next = new Map(prev)
-      next.delete(id)
-      return next
-    })
-    codeViewRef.current?.clearSelectedLines()
-  }
-
-  const removeFromPending = (id: string) => {
-    if (!pending) return
-    updatePending({
-      ...pending,
-      lineComments: pending.lineComments.filter(c => c.id !== id),
-      updatedAt: Date.now()
-    })
-    cancelEdit(id)
-  }
-
-  const updateSummary = (summary: string) => {
-    if (!pending) return
-    updatePending({ ...pending, summary, updatedAt: Date.now() })
-  }
+  const startEdit = draft.startEdit
+  const updateEditBody = draft.updateBody
+  const submitEdit = draft.commit
+  const cancelEdit = draft.cancel
+  const removeFromPending = draft.remove
+  const updateSummary = draft.setSummary
 
   const submitToAgent = async () => {
     if (!pending) return
     try {
       await window.api.reviewSubmitToAgent(pending)
-      setPending(null)
+      draft.markSubmitted()
       toast.success('Copied to clipboard', { timeout: 3000 })
     } catch (err) {
       toast.error('Copy failed', { description: (err as Error).message })
@@ -2022,54 +1456,12 @@ function LoadedView({
       destructive: true
     })
     if (!ok) return
-    await window.api.reviewDelete(target)
-    setPending(null)
+    draft.discard()
   }
 
   useKeyboardShortcut(pending ? null : { key: 'r', handler: startReview })
   useKeyboardShortcut(pending ? { key: 'Enter', meta: true, allowInForm: true, handler: submitToAgent } : null)
   useKeyboardShortcut(pending ? { key: 'Escape', handler: discardReview } : null)
-
-  const [fileTreeOpen, setFileTreeOpen] = usePersistedBoolean('file-tree-open', true)
-  const [reviewPanelOpen, setReviewPanelOpen] = usePersistedBoolean('review-panel-open', true)
-  const [codeMode, setCodeMode] = usePersistedBoolean('code-mode', true)
-
-  const openFile = (path: string) => {
-    model.getItem(path)?.select()
-    setCodeMode(true)
-  }
-
-  useKeyboardShortcut({
-    key: 'b',
-    meta: true,
-    allowInForm: true,
-    handler: e => {
-      e.preventDefault()
-      setFileTreeOpen(v => !v)
-    }
-  })
-  useKeyboardShortcut({
-    key: 'e',
-    meta: true,
-    allowInForm: true,
-    handler: e => {
-      e.preventDefault()
-      setCodeMode(v => !v)
-    }
-  })
-  useKeyboardShortcut({
-    key: 'l',
-    meta: true,
-    allowInForm: true,
-    handler: e => {
-      e.preventDefault()
-      if (!pending) {
-        startReview()
-      } else {
-        setReviewPanelOpen(v => !v)
-      }
-    }
-  })
 
   return (
     <main className="h-screen flex flex-col bg-surface">
@@ -2100,76 +1492,48 @@ function LoadedView({
       {!codeMode ? (
         <ConversationPane files={files} onOpenFile={openFile} />
       ) : (
-      <ResizablePanelGroup orientation="horizontal" id="local-panes" className="flex-1 min-h-0">
-        {fileTreeOpen && (
-          <>
-            <ResizablePanel defaultSize="20%" minSize="10%" maxSize="40%" className="overflow-hidden">
-              <aside className="w-full h-full overflow-auto bg-sidebar py-1.5">
-                <FileTree model={model} />
-              </aside>
-            </ResizablePanel>
-            <ResizableHandle />
-          </>
-        )}
-        <ResizablePanel defaultSize={pending ? '55%' : '80%'} minSize="30%" className="overflow-hidden">
-          <section
-            ref={diffSectionRef}
-            className="diff-host w-full h-full flex flex-col"
-          >
-            {codeViewItems.length > 0 ? (
-              <CodeView<AnnotationMeta>
-                ref={codeViewRef}
-                className={CODE_VIEW_CLASS}
-                items={codeViewItems}
-                renderHeaderPrefix={renderHeaderPrefix}
-                options={{
-                  enableGutterUtility: true,
-                  onGutterUtilityClick: (range, ctx) => {
-                    startDraft({
-                      path: ctx.item.id,
-                      anchor: specFromRange(range)
-                    })
-                  }
-                }}
-                renderAnnotation={ann => {
-                  const meta = ann.metadata!
-                  if (meta.kind === 'existing') return null
-                  const id = meta.comment.id
-                  const editing = editingComments.get(id)
-                  if (editing) {
-                    return (
-                      <PendingCommentEditor
-                        comment={editing.comment}
-                        onChange={body => updateEditBody(id, body)}
-                        onSubmit={() => submitEdit(id)}
-                        onCancel={() => cancelEdit(id)}
-                      />
-                    )
-                  }
-                  const submitted = pending?.lineComments.find(c => c.id === id)
-                  if (!submitted) return null
-                  return (
-                    <PendingCommentCard
-                      comment={submitted}
-                      onEdit={() => startEdit(id)}
-                      onDelete={() => removeFromPending(id)}
-                    />
-                  )
-                }}
+        <ReviewSurface
+          panesId="local-panes"
+          model={model}
+          fileTreeOpen={fileTreeOpen}
+          treeSize="20%"
+          diffSize={pending ? '55%' : '80%'}
+          panelSize="25%"
+          codeViewRef={codeViewRef}
+          diffSectionRef={shell.diffSectionRef}
+          items={shell.codeViewItems}
+          renderHeaderPrefix={shell.renderHeaderPrefix}
+          onGutterDraft={startDraft}
+          emptyState={
+            selectedFile?.isBinary ? 'Binary file — no diff preview' : 'No diff to display'
+          }
+          renderAnnotation={ann => {
+            const meta = ann.metadata!
+            if (meta.kind === 'existing') return null
+            const id = meta.comment.id
+            const editing = editingComments.get(id)
+            if (editing) {
+              return (
+                <PendingCommentEditor
+                  comment={editing.comment}
+                  onChange={body => updateEditBody(id, body)}
+                  onSubmit={() => submitEdit(id)}
+                  onCancel={() => cancelEdit(id)}
+                />
+              )
+            }
+            const submitted = pending?.lineComments.find(c => c.id === id)
+            if (!submitted) return null
+            return (
+              <PendingCommentCard
+                comment={submitted}
+                onEdit={() => startEdit(id)}
+                onDelete={() => removeFromPending(id)}
               />
-            ) : (
-              <div className="p-4 text-subtle">
-                {selectedFile?.isBinary
-                  ? 'Binary file — no diff preview'
-                  : 'No diff to display'}
-              </div>
-            )}
-          </section>
-        </ResizablePanel>
-        {pending && reviewPanelOpen && (
-          <>
-            <ResizableHandle />
-            <ResizablePanel defaultSize="25%" minSize="15%" maxSize="45%" className="overflow-hidden">
+            )
+          }}
+          reviewPanel={
+            pending && reviewPanelOpen ? (
               <ReviewPanel
                 pending={pending}
                 onSummaryChange={updateSummary}
@@ -2177,10 +1541,9 @@ function LoadedView({
                 onSubmit={submitToAgent}
                 onDiscard={discardReview}
               />
-            </ResizablePanel>
-          </>
-        )}
-      </ResizablePanelGroup>
+            ) : null
+          }
+        />
       )}
     </main>
   )
