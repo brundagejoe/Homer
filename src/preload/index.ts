@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import type { CoverageMap } from '../shared/guide-schema'
+import type { RenderableSection } from '../shared/guide-view'
 
 const PR_FLAG = '--pr='
 
@@ -151,6 +153,10 @@ export interface PrTarget {
   number: number
 }
 
+export interface GuideError {
+  message: string
+}
+
 const api = {
   prTarget,
   onNavigate: (cb: (route: NavRoute) => void): (() => void) => {
@@ -177,7 +183,30 @@ const api = {
   githubGetPRConversation: (t: PrTarget): Promise<ConversationComment[]> =>
     ipcRenderer.invoke('github:get-pr-conversation', t),
   /** Manual "clear cached checkouts": remove all cached PR Worktrees. */
-  worktreeClearCache: (): Promise<void> => ipcRenderer.invoke('worktree:clear')
+  worktreeClearCache: (): Promise<void> => ipcRenderer.invoke('worktree:clear'),
+
+  /**
+   * Start generating the Guide for a PR. Sections then arrive via
+   * `onGuideSection`, completion via `onGuideFinalized`, and any failure via
+   * `onGuideError`. Additive: it never rejects — a generation failure surfaces
+   * as a `guide:error` event, leaving Activity and Diff untouched.
+   */
+  startGuide: (t: PrTarget): Promise<void> => ipcRenderer.invoke('guide:generate', t),
+  onGuideSection: (cb: (section: RenderableSection) => void): (() => void) => {
+    const listener = (_e: unknown, section: RenderableSection): void => cb(section)
+    ipcRenderer.on('guide:section-emitted', listener)
+    return () => ipcRenderer.removeListener('guide:section-emitted', listener)
+  },
+  onGuideFinalized: (cb: (coverage: CoverageMap) => void): (() => void) => {
+    const listener = (_e: unknown, coverage: CoverageMap): void => cb(coverage)
+    ipcRenderer.on('guide:finalized', listener)
+    return () => ipcRenderer.removeListener('guide:finalized', listener)
+  },
+  onGuideError: (cb: (error: GuideError) => void): (() => void) => {
+    const listener = (_e: unknown, error: GuideError): void => cb(error)
+    ipcRenderer.on('guide:error', listener)
+    return () => ipcRenderer.removeListener('guide:error', listener)
+  }
 }
 
 export type DiffViewerApi = typeof api

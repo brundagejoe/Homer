@@ -3,6 +3,7 @@ import { ExternalLink } from 'lucide-react'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
 import { DiffView } from './DiffView'
+import { GuideView } from './GuideView'
 import { Markdown } from './Markdown'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -173,7 +174,7 @@ function Window({ target }: { target: PrTarget }) {
         <HelpButton />
       </TitleBar>
       {tab === 'activity' && <ActivityView status={status} />}
-      {tab === 'guide' && <GuidePlaceholder />}
+      {tab === 'guide' && <GuideView target={target} />}
       {tab === 'diff' && <DiffView target={target} />}
     </main>
   )
@@ -310,14 +311,6 @@ function ActivityLoaded({
         )}
       </div>
     </section>
-  )
-}
-
-function GuidePlaceholder() {
-  return (
-    <CenteredNote>
-      The Guide will generate here — a scrollytelling walkthrough of the change.
-    </CenteredNote>
   )
 }
 

@@ -1,7 +1,8 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { join } from 'node:path'
-import { registerIpcHandlers, worktreeManager } from './ipc'
+import { registerIpcHandlers } from './ipc'
+import { worktreeManager } from './services'
 import { buildLaunchArgs, resolveLaunchTarget, type PrTarget } from './launch'
 import { WindowStateStore } from './window-state-store'
 
