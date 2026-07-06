@@ -4,11 +4,21 @@ import type { InlineComment, LineComment } from '../../preload'
 /**
  * Annotation payload for Pierre. Existing threads come from GitHub and
  * render read-only; pending comments are local drafts that render as an
- * editable composer. Both kinds anchor to a (path, lineNumber, side).
+ * editable composer; an `unnarrated` flag marks a changed hunk the Guide
+ * did not narrate (the completeness backstop). All anchor to a (path,
+ * lineNumber, side).
  */
 export type AnnotationMeta =
   | { kind: 'existing'; comment: InlineComment }
   | { kind: 'pending'; comment: LineComment }
+  | { kind: 'unnarrated' }
+
+/** Where an un-narrated flag anchors: a hunk's first changed line. */
+export interface UnnarratedAnchor {
+  path: string
+  side: DiffLineAnnotation<AnnotationMeta>['side']
+  lineNumber: number
+}
 
 /** GitHub uses LEFT/RIGHT; our Line Comments use old/new. Both collapse
  *  to Pierre's deletions/additions gutter sides. This is the one place
@@ -34,12 +44,18 @@ export function buildAnnotationMap(sources: {
   existing?: readonly InlineComment[]
   pending?: readonly LineComment[]
   drafts?: readonly LineComment[]
+  unnarrated?: readonly UnnarratedAnchor[]
 }): Map<string, DiffLineAnnotation<AnnotationMeta>[]> {
   const map = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>()
   const push = (path: string, annotation: DiffLineAnnotation<AnnotationMeta>): void => {
     const list = map.get(path) ?? []
     list.push(annotation)
     map.set(path, list)
+  }
+  // Un-narrated flags render first so the completeness marker leads any
+  // comments that happen to share a hunk's first line.
+  for (const u of sources.unnarrated ?? []) {
+    push(u.path, { side: u.side, lineNumber: u.lineNumber, metadata: { kind: 'unnarrated' } })
   }
   for (const c of sources.existing ?? []) {
     push(c.path, { side: inlineSide(c.side), lineNumber: c.lineNumber, metadata: { kind: 'existing', comment: c } })

@@ -9,10 +9,10 @@ import type {
 /**
  * The Pending Review drafting machine.
  *
- * This is the single home for the rules that were previously copy-pasted
- * across the PR Review and Local Mode views: what a Pending Review is,
- * how Line Comments are buffered while being edited, when a fresh draft
- * promotes itself into a Pending Review, and what gets persisted when.
+ * This is the single home for the rules every authoring surface shares:
+ * what a Pending Review is, how Line Comments are buffered while being
+ * edited, when a fresh draft promotes itself into a Pending Review, and
+ * what gets persisted when.
  *
  * The reducer is pure and total — every impure input (timestamps, ids,
  * the snapshot to freeze) is supplied by the caller in the action, so
@@ -69,7 +69,15 @@ export type DraftAction =
   | { type: 'removeComment'; id: string; now: number }
   | { type: 'setSummary'; summary: string; now: number }
   | { type: 'setEvent'; event: ReviewEvent; now: number }
-  | { type: 'refreshSnapshot'; snapshot: DiffSnapshot; now: number }
+  /**
+   * Re-snapshot after a Refresh. The caller has already reconciled the old
+   * comments against the new snapshot (the single reconciliation site lives in
+   * `useReviewDraft.refresh`), so this action just applies the split: survivors
+   * carry, orphans are appended to the flagged set.
+   */
+  | { type: 'refreshSnapshot'; snapshot: DiffSnapshot; carried: LineComment[]; orphaned: LineComment[]; now: number }
+  /** Acknowledge (discard) one flagged orphan after a Refresh. */
+  | { type: 'dismissOrphan'; id: string; now: number }
   | { type: 'discard' }
   /** Pending Review left as a submitted Review; clear local state. */
   | { type: 'submitted' }
@@ -221,7 +229,26 @@ export function reviewDraftReducer(
 
     case 'refreshSnapshot': {
       if (!state.pending) return [state, NONE]
-      const review = { ...state.pending, snapshot: action.snapshot, updatedAt: action.now }
+      // Line Comments anchor to the frozen snapshot, not live content (ADR
+      // 0001). The caller has already split them against the fresh snapshot into
+      // survivors (code unchanged at the same spot) and orphans (code changed,
+      // moved, or vanished). Orphans are kept and flagged, never dropped — the
+      // Pending Review is the one non-regenerable, human-authored state.
+      const review: PendingReview = {
+        ...state.pending,
+        snapshot: action.snapshot,
+        lineComments: action.carried,
+        orphanedComments: [...(state.pending.orphanedComments ?? []), ...action.orphaned],
+        updatedAt: action.now
+      }
+      return [{ ...state, pending: review }, persist(review)]
+    }
+
+    case 'dismissOrphan': {
+      if (!state.pending?.orphanedComments) return [state, NONE]
+      const orphanedComments = state.pending.orphanedComments.filter(c => c.id !== action.id)
+      if (orphanedComments.length === state.pending.orphanedComments.length) return [state, NONE]
+      const review = { ...state.pending, orphanedComments, updatedAt: action.now }
       return [{ ...state, pending: review }, persist(review)]
     }
 

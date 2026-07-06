@@ -1,106 +1,34 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { registerIpcHandlers } from './ipc'
-import { parsePrUrl } from './pr-url'
-import { GitDiffProvider } from './git-diff-provider'
+import { worktreeManager } from './services'
+import { buildLaunchArgs, resolveLaunchTarget, type PrTarget } from './launch'
 import { WindowStateStore } from './window-state-store'
 
-const REPO_FLAG = '--repo-path='
-const PR_FLAG = '--pr='
-const PURPOSE_FLAG = '--purpose='
-const LAUNCH_REPO_FLAG = '--launch-repo='
+/** Product identity. Keep in sync with package.json `productName`/`build.appId`. */
+const PRODUCT_NAME = 'Homer'
+const APP_ID = 'com.brundagejoe.homer'
 
-/** The route a launch resolves to — where the (single) window starts. */
-type LaunchRoute =
-  | { kind: 'inbox' }
-  | { kind: 'local'; repoPath: string }
-  | { kind: 'pr-review'; owner: string; repo: string; number: number }
+/**
+ * The app icon lives in `build/` (source SVG + generated raster/icns).
+ * On macOS the dock/app icon comes from the packaged `.icns`; this PNG is
+ * used for the BrowserWindow on Windows/Linux and for the dock during dev.
+ */
+const APP_ICON = join(app.getAppPath(), 'build', 'icon.png')
+
+// Set the app name as early as possible so the macOS menu bar, dock, and
+// About panel read "Homer" rather than "Electron" (belt-and-suspenders with
+// package.json `productName`).
+app.setName(PRODUCT_NAME)
 
 /** Renderer-facing navigation event shape (matches NavRoute in preload). */
-type NavRoute =
-  | { kind: 'inbox' }
-  | { kind: 'local'; repoPath: string }
-  | { kind: 'pr'; target: { owner: string; repo: string; number: number } }
+type NavRoute = { kind: 'pr'; target: PrTarget }
 
 /**
- * A launch resolves to a starting route plus the local repo (if any)
- * the window was opened from. `repoPath` lets the inbox offer a jump
- * back to that repo's local changes even when we start on the inbox.
- */
-interface Launch {
-  route: LaunchRoute
-  repoPath: string | null
-}
-
-const provider = new GitDiffProvider()
-
-/**
- * Decide where a launch lands. A PR URL/flag opens that PR. A repo path
- * (explicit flag or positional) opens its Code view *only if it has
- * active changes*; a clean repo falls back to the inbox. With nothing,
- * the inbox.
- */
-async function resolveLaunch(argv: string[]): Promise<Launch> {
-  const prFlag = argv.find(a => a.startsWith(PR_FLAG))
-  if (prFlag) {
-    const [owner, repo, numStr] = prFlag.slice(PR_FLAG.length).split('/')
-    return { route: { kind: 'pr-review', owner, repo, number: Number(numStr) }, repoPath: null }
-  }
-
-  let repoPath: string | null = null
-  const explicit = argv.find(a => a.startsWith(REPO_FLAG))
-  if (explicit) {
-    repoPath = explicit.slice(REPO_FLAG.length)
-  } else {
-    const positional = argv.slice(2).find(a => !a.startsWith('-') && !a.includes('app.asar'))
-    if (positional) {
-      const fromUrl = parsePrUrl(positional)
-      if (fromUrl) return { route: { kind: 'pr-review', ...fromUrl }, repoPath: null }
-      repoPath = resolve(positional)
-    }
-  }
-
-  if (repoPath && (await provider.hasChanges(repoPath))) {
-    return { route: { kind: 'local', repoPath }, repoPath }
-  }
-  return { route: { kind: 'inbox' }, repoPath: null }
-}
-
-function toNavRoute(route: LaunchRoute): NavRoute {
-  switch (route.kind) {
-    case 'inbox':
-      return { kind: 'inbox' }
-    case 'local':
-      return { kind: 'local', repoPath: route.repoPath }
-    case 'pr-review':
-      return { kind: 'pr', target: { owner: route.owner, repo: route.repo, number: route.number } }
-  }
-}
-
-function buildLaunchArgs(launch: Launch): string[] {
-  const args: string[] = []
-  switch (launch.route.kind) {
-    case 'inbox':
-      args.push(`${PURPOSE_FLAG}inbox`)
-      break
-    case 'local':
-      args.push(`${PURPOSE_FLAG}local`, `${REPO_FLAG}${launch.route.repoPath}`)
-      break
-    case 'pr-review':
-      args.push(
-        `${PURPOSE_FLAG}pr-review`,
-        `${PR_FLAG}${launch.route.owner}/${launch.route.repo}/${launch.route.number}`
-      )
-      break
-  }
-  if (launch.repoPath) args.push(`${LAUNCH_REPO_FLAG}${launch.repoPath}`)
-  return args
-}
-
-/**
- * The app owns exactly one window (ADR 0003). Navigation between the
- * inbox, a PR, and local changes happens inside it.
+ * The app owns exactly one window (ADR 0003). It always shows one PR's
+ * three-tab Window (Activity · Guide · Diff); navigation happens between
+ * the tabs inside it.
  */
 let mainWindow: BrowserWindow | null = null
 
@@ -137,15 +65,19 @@ function attachBoundsPersistence(win: BrowserWindow): void {
 
 /**
  * Open the single window, or — if it already exists — focus it and
- * navigate it to the launch's route in place.
+ * navigate it to the launch's PR in place. A launch without a PR URL
+ * still opens the window; the renderer shows a "paste a PR URL" state.
  */
-async function openOrNavigate(argv: string[]): Promise<void> {
-  const launch = await resolveLaunch(argv)
+function openOrNavigate(argv: string[]): void {
+  const target = resolveLaunchTarget(argv)
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
-    mainWindow.webContents.send('app:navigate', toNavRoute(launch.route))
+    if (target) {
+      const nav: NavRoute = { kind: 'pr', target }
+      mainWindow.webContents.send('app:navigate', nav)
+    }
     return
   }
 
@@ -157,14 +89,15 @@ async function openOrNavigate(argv: string[]): Promise<void> {
     y: bounds.y,
     show: false,
     autoHideMenuBar: true,
-    title: 'Diff Viewer',
+    title: PRODUCT_NAME,
+    icon: APP_ICON,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     backgroundColor: '#ffffff',
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
-      additionalArguments: buildLaunchArgs(launch)
+      additionalArguments: buildLaunchArgs(target)
     }
   })
   attachBoundsPersistence(win)
@@ -191,23 +124,55 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', (_event, argv) => {
-    void openOrNavigate(argv)
+    openOrNavigate(argv)
   })
 
-  app.whenReady().then(() => {
-    electronApp.setAppUserModelId('com.brundagejoe.diff-viewer')
+  app.whenReady().then(async () => {
+    electronApp.setAppUserModelId(APP_ID)
+
+    // De-Electron-ify the About panel (Cmd-click app menu → About Homer).
+    app.setAboutPanelOptions({
+      applicationName: PRODUCT_NAME,
+      applicationVersion: app.getVersion(),
+      credits: 'A guided tour of a GitHub PR.'
+    })
+
+    // Show the custom icon in the dock during `bun run dev` (packaged builds
+    // get it from the bundled .icns). Guarded: dock exists on macOS only.
+    if (is.dev && process.platform === 'darwin' && app.dock) {
+      app.dock.setIcon(APP_ICON)
+    }
+
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
     })
 
     registerIpcHandlers()
-    void openOrNavigate(process.argv)
+
+    // Startup sweep: clean up PR Worktrees left behind by a crashed session
+    // (prune stale registrations + delete orphan folders) before we begin.
+    // Awaited so it can't race a first acquire over the shared index.
+    await worktreeManager()
+      .sweep()
+      .catch(err => console.error('PR worktree sweep failed', err))
+
+    openOrNavigate(process.argv)
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        void openOrNavigate(process.argv)
+        openOrNavigate(process.argv)
       }
     })
+  })
+
+  // Session-close cleanup: release the PR Worktrees this session materialized.
+  app.on('before-quit', event => {
+    const mgr = worktreeManager()
+    event.preventDefault()
+    mgr
+      .releaseAll()
+      .catch(err => console.error('PR worktree release failed', err))
+      .finally(() => app.exit(0))
   })
 
   app.on('window-all-closed', () => {

@@ -2,7 +2,9 @@
 
 A local, reviewer-side tool for reviewing someone else's GitHub PR. Launched from the CLI inside a repo with a PR URL, it runs an autonomous Claude **Agent** against the PR and generates a **Guide** — a scrollytelling story of small **Sections** that walk you through the intent and context of the change — so that when you finish, you feel like an owner of the code. Then you review the full diff normally and submit one batched **Review** to GitHub.
 
-This product replaces the earlier local diff-viewer. The Electron shell, `gh` auth delegation, Pierre diff/tree renderers, the **Review** / **Line Comment** model, and SQLite persistence carry over; the goals and top-level views do not. (Working title / command: `dv` — product name TBD.)
+This product replaces the earlier local diff-viewer. The Electron shell, `gh` auth delegation, Pierre diff/tree renderers, the **Review** / **Line Comment** model, and SQLite persistence carry over; the goals and top-level views do not.
+
+**Product name: Homer** (the storyteller — Homer tells the story of a PR). The CLI command is `homer`. macOS bundle id: `com.brundagejoe.homer`.
 
 ## Language
 

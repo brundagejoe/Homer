@@ -1,0 +1,409 @@
+import { useCallback, useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
+import type { DiffLineAnnotation } from '@pierre/diffs'
+import { Markdown } from './Markdown'
+import { clearDraftBody, getDraftBody, setDraftBody, subscribeDraftBody } from './draft-body-store'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Select } from '@/components/ui/select'
+import { Tooltip } from '@/components/ui/tooltip'
+import type { AnnotationMeta } from './diff-annotations'
+import type { AnchorSpec, Editing } from './review-draft'
+import type { UseReviewDraft } from './useReviewDraft'
+import type { InlineComment, LineComment, PendingReview, ReviewEvent } from '../../preload'
+
+/**
+ * The shared review-comment UI kit: the presentation + dispatch layer that
+ * sits on top of the (already shared) Pending Review state machine
+ * (`useReviewDraft` / `review-draft` / `diff-annotations` / `ReviewSurface`).
+ *
+ * Both authoring surfaces reuse this — the Diff tab today and the Guide tab
+ * (slice #29) next — so the annotation dispatch, the three comment cards,
+ * and the batched-Review panel live here rather than being copy-pasted into
+ * each view. Nothing here is Diff-specific: callers hand it a
+ * `UseReviewDraft` and a panel-opening `startDraft`, and wire the output
+ * into `ReviewSurface`'s `renderAnnotation` / `reviewPanel` props.
+ */
+
+/** A `startDraft` that also opens the review panel (i.e. `ReviewSurfaceShell.startDraft`). */
+type StartDraft = (spec: { path: string; anchor: AnchorSpec; inReplyToId?: number }) => void
+
+/** "12-18" if multi-line, "12" otherwise. */
+export function formatLineRange(start: number | undefined, end: number): string {
+  return start != null && start !== end ? `${start}-${end}` : `${end}`
+}
+
+/** New (not-yet-committed) drafts need an annotation slot so their editor
+ *  renders at the right line. */
+export function draftComments(editing: ReadonlyMap<string, Editing>): LineComment[] {
+  return [...editing.values()].filter(e => e.isNew).map(e => e.comment)
+}
+
+/**
+ * Build the `renderAnnotation` dispatcher for `ReviewSurface`: it maps each
+ * annotation (existing GitHub thread / in-flight draft editor / committed
+ * pending card) to its component, driven entirely by the supplied draft.
+ * `startDraft` is the panel-opening variant so a reply opens the panel too.
+ */
+export function makeReviewAnnotationRenderer({
+  draft,
+  startDraft
+}: {
+  draft: UseReviewDraft
+  startDraft: StartDraft
+}): (ann: DiffLineAnnotation<AnnotationMeta>) => ReactNode {
+  const { pending, editing } = draft
+  return ann => {
+    const meta = ann.metadata!
+    if (meta.kind === 'unnarrated') {
+      return <UnnarratedFlag />
+    }
+    if (meta.kind === 'existing') {
+      const replyToId = meta.comment.id
+      const hasReply =
+        (pending?.lineComments ?? []).some(c => c.inReplyToId === replyToId) ||
+        [...editing.values()].some(e => e.isNew && e.comment.inReplyToId === replyToId)
+      return (
+        <ExistingThreadAnnotation
+          comment={meta.comment}
+          hasReply={hasReply}
+          onReply={() =>
+            startDraft({
+              path: meta.comment.path,
+              anchor: {
+                lineNumber: meta.comment.lineNumber,
+                side: meta.comment.side === 'LEFT' ? 'old' : 'new'
+              },
+              inReplyToId: meta.comment.id
+            })
+          }
+        />
+      )
+    }
+    const id = meta.comment.id
+    const edit = editing.get(id)
+    if (edit) {
+      return (
+        <PendingCommentEditor
+          key={id}
+          comment={edit.comment}
+          onSubmit={body => {
+            draft.updateBody(id, body)
+            draft.commit(id)
+            clearDraftBody(id)
+          }}
+          onCancel={() => {
+            draft.cancel(id)
+            clearDraftBody(id)
+          }}
+        />
+      )
+    }
+    const committed = pending?.lineComments.find(c => c.id === id)
+    if (!committed) return null
+    return (
+      <PendingCommentCard
+        comment={committed}
+        onEdit={() => draft.startEdit(id)}
+        onDelete={() => draft.remove(id)}
+      />
+    )
+  }
+}
+
+/**
+ * The completeness backstop marker: a changed hunk the Guide did not
+ * narrate. Deliberately distinct from a Line Comment (a warning-tinted
+ * inline banner, no author/actions) so the reviewer reads it as "the
+ * story skipped this — look here" rather than as feedback.
+ */
+export function UnnarratedFlag() {
+  return (
+    <div className="mx-2 my-1 flex items-center gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1 text-[11.5px] text-warning">
+      <span aria-hidden>⚑</span>
+      <span>Not narrated by the Guide — review this change.</span>
+    </div>
+  )
+}
+
+/**
+ * Read-only render of an existing GitHub thread. A Reply button appears
+ * when the viewer has no draft reply to this thread yet.
+ */
+export function ExistingThreadAnnotation({
+  comment,
+  hasReply,
+  onReply
+}: {
+  comment: InlineComment
+  hasReply: boolean
+  onReply?: () => void
+}) {
+  const range = formatLineRange(comment.startLine, comment.lineNumber)
+  return (
+    <div className="review-annotation rounded-md px-2.5 py-1.5 mx-2 my-1 text-[12.5px]">
+      <div className="text-[11px] text-subtle">
+        {comment.author} · line {range} · {new Date(comment.createdAt).toLocaleString()}
+      </div>
+      <Markdown compact>{comment.body}</Markdown>
+      {onReply && !hasReply && (
+        <Button size="sm" onClick={onReply} className="self-start mt-1">
+          Reply
+        </Button>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Editing state for an inline draft comment. The in-progress body lives in an
+ * EXTERNAL per-comment store (see draft-body-store), not the Window-level review
+ * draft: a keystroke re-renders only this editor (not every FileDiff panel in
+ * the Guide, which made typing crawl), and the text survives Pierre re-rendering
+ * the annotation node. It's flushed into the draft only on submit; cancelling a
+ * brand-new draft abandons it without ever touching disk.
+ */
+export function PendingCommentEditor({
+  comment,
+  onSubmit,
+  onCancel
+}: {
+  comment: LineComment
+  onSubmit: (body: string) => void
+  onCancel: () => void
+}) {
+  const id = comment.id
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const isReply = comment.inReplyToId != null
+
+  const body = useSyncExternalStore(
+    useCallback(cb => subscribeDraftBody(id, cb), [id]),
+    useCallback(() => getDraftBody(id, comment.body), [id, comment.body])
+  )
+
+  useEffect(() => {
+    textareaRef.current?.focus()
+  }, [])
+  // Click-outside-to-cancel. We test the LIVE DOM from the click target upward
+  // (`closest('[data-comment-editor]')`) rather than a captured container ref:
+  // Pierre re-renders annotations through its own DOM path, which re-creates the
+  // editor node and would leave a ref stale — making `ref.contains()` return
+  // false for a click on our OWN submit button and cancel the draft instead of
+  // committing it (the "comment vanishes on save" bug). A marker lookup on the
+  // live target is immune to that re-creation.
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const node = e.target as Element | null
+      if (node?.closest?.('[data-comment-editor]')) return
+      onCancel()
+    }
+    const timer = window.setTimeout(() => document.addEventListener('mousedown', onDown), 0)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [onCancel])
+  const canSubmit = body.trim().length > 0
+  const range = formatLineRange(comment.startLineNumber, comment.lineNumber)
+  const submit = (): void => {
+    if (canSubmit) onSubmit(body)
+  }
+  return (
+    <div
+      data-comment-editor
+      className="border border-hairline-strong rounded-md bg-elevated px-2.5 py-2 mx-2 my-1 flex flex-col gap-2"
+    >
+      <div className="text-[11px] text-muted">
+        {isReply ? 'Your reply' : `Your comment · line ${range}`}
+      </div>
+      <Textarea
+        ref={textareaRef}
+        value={body}
+        onChange={e => setDraftBody(id, e.target.value)}
+        rows={3}
+        placeholder={isReply ? 'Write a reply…' : 'Write a comment…'}
+        className="w-full text-[12.5px]"
+        onKeyDown={e => {
+          // Stop these from bubbling to the window-level review shortcuts.
+          // Without stopPropagation, ⌘/Ctrl+Enter here would ALSO fire the
+          // global "submit review to GitHub" once a review is pending — an
+          // irreversible submit that posts before this comment is committed.
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSubmit) {
+            e.preventDefault()
+            e.stopPropagation()
+            submit()
+          } else if (e.key === 'Escape') {
+            e.preventDefault()
+            e.stopPropagation()
+            onCancel()
+          }
+        }}
+      />
+      <div className="flex justify-end gap-2">
+        <Button size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button variant="primary" size="sm" onClick={submit} disabled={!canSubmit}>
+          Add review comment
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Collapsed read-only view of a comment already on the pending review.
+ * Edit puts it back into editing state; Delete removes it entirely.
+ */
+export function PendingCommentCard({
+  comment,
+  onEdit,
+  onDelete
+}: {
+  comment: LineComment
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  const isReply = comment.inReplyToId != null
+  const range = formatLineRange(comment.startLineNumber, comment.lineNumber)
+  return (
+    <div className="border border-accent/40 bg-selected/60 rounded-md px-2.5 py-1.5 mx-2 my-1 flex flex-col gap-1 text-[12.5px]">
+      <div className="flex items-center justify-between text-[11px] text-muted">
+        <span>
+          {isReply ? 'Your reply · pending review' : `Your comment · line ${range} · pending review`}
+        </span>
+        <div className="flex gap-1">
+          <Tooltip content="Edit">
+            <Button variant="ghost" size="icon" onClick={onEdit} aria-label="Edit comment">
+              ✎
+            </Button>
+          </Tooltip>
+          <Tooltip content="Delete">
+            <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Delete comment">
+              ×
+            </Button>
+          </Tooltip>
+        </div>
+      </div>
+      <Markdown compact>{comment.body}</Markdown>
+    </div>
+  )
+}
+
+/** The batched-Review panel: comment roster, overall summary, submit
+ *  event, and the submit / discard actions. GitHub PR is the only
+ *  Destination, so there is no destination picker. */
+export function ReviewPanel({
+  pending,
+  submitting,
+  diffPassDone,
+  onDiffPassChange,
+  unnarratedCount,
+  onSummary,
+  onEvent,
+  onSubmit,
+  onDiscard
+}: {
+  pending: PendingReview
+  submitting: boolean
+  /** Whether the reviewer has confirmed the required Diff pass. */
+  diffPassDone: boolean
+  onDiffPassChange: (done: boolean) => void
+  /** Changed hunks the Guide did not narrate, flagged in the diff. */
+  unnarratedCount: number
+  onSummary: (s: string) => void
+  onEvent: (e: ReviewEvent) => void
+  onSubmit: () => void
+  onDiscard: () => void
+}) {
+  const newCount = pending.lineComments.filter(c => c.inReplyToId == null).length
+  const replyCount = pending.lineComments.length - newCount
+  return (
+    <aside className="h-full w-full bg-sidebar p-3 flex flex-col gap-3 overflow-hidden">
+      <h3 className="m-0 text-[14px] font-semibold">Pending review</h3>
+
+      <div className="text-[12px] text-muted">
+        {pending.lineComments.length === 0 ? (
+          'No comments yet — click the + in the gutter to add one'
+        ) : (
+          <>
+            {newCount} new {newCount === 1 ? 'comment' : 'comments'}
+            {replyCount > 0 && ` · ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}`}
+          </>
+        )}
+      </div>
+
+      {pending.lineComments.length > 0 && (
+        <div className="overflow-auto flex flex-col gap-1.5 max-h-[40%] shrink-0">
+          {pending.lineComments.map(c => (
+            <div key={c.id} className="p-1.5 border border-hairline rounded text-[11.5px] bg-elevated">
+              <div className="text-subtle text-[10.5px] truncate">
+                {c.path}:{formatLineRange(c.startLineNumber, c.lineNumber)}
+                {c.inReplyToId != null && ' · reply'}
+              </div>
+              <div className="line-clamp-2 text-fg">{c.body || '(empty)'}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <label className="flex flex-col gap-1 flex-1 min-h-0">
+        <span className="text-[11px] text-muted">Summary</span>
+        <Textarea
+          value={pending.summary}
+          onChange={e => onSummary(e.target.value)}
+          placeholder="Overall feedback…"
+          className="w-full text-[12.5px] flex-1 min-h-[80px]"
+        />
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-muted">Submit as</span>
+        <Select value={pending.event ?? 'COMMENT'} onChange={e => onEvent(e.target.value as ReviewEvent)}>
+          <option value="COMMENT">Comment</option>
+          <option value="APPROVE">Approve</option>
+          <option value="REQUEST_CHANGES">Request changes</option>
+        </Select>
+      </label>
+
+      <label className="flex items-start gap-2 border-t border-hairline pt-2.5 text-[12px] cursor-pointer">
+        <input
+          type="checkbox"
+          checked={diffPassDone}
+          onChange={e => onDiffPassChange(e.target.checked)}
+          className="mt-0.5"
+        />
+        <span className="text-fg">
+          I&apos;ve completed the Diff pass
+          <span className="block text-[11px] text-muted">
+            {unnarratedCount > 0
+              ? `${unnarratedCount} change${unnarratedCount === 1 ? '' : 's'} the Guide didn't narrate ${
+                  unnarratedCount === 1 ? 'is' : 'are'
+                } flagged in the diff — required before submitting so nothing hides.`
+              : 'Required before submitting so nothing hides.'}
+          </span>
+        </span>
+      </label>
+
+      <div className="flex gap-2">
+        <Tooltip
+          content={
+            diffPassDone
+              ? 'Submit review to GitHub'
+              : 'Complete the Diff pass to submit — confirm you have reviewed the diff'
+          }
+          shortcut="⌘⏎"
+        >
+          <Button
+            variant="primary"
+            onClick={onSubmit}
+            disabled={submitting || !diffPassDone}
+            className="flex-1"
+          >
+            {submitting ? 'Submitting…' : 'Submit review'}
+          </Button>
+        </Tooltip>
+        <Button onClick={onDiscard}>Discard</Button>
+      </div>
+    </aside>
+  )
+}

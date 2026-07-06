@@ -1,31 +1,4 @@
-export interface SearchParams {
-  q: string
-  per_page?: number
-  sort?: string
-  order?: 'asc' | 'desc'
-}
-
-export interface SearchResponseItem {
-  id: number
-  number: number
-  title: string
-  html_url: string
-  updated_at: string
-  comments: number
-  draft?: boolean
-  state: string
-  user?: { login: string } | null
-  repository_url: string
-  pull_request?: { merged_at: string | null } | null
-}
-
-export interface SearchResponse {
-  data: {
-    total_count: number
-    incomplete_results: boolean
-    items: SearchResponseItem[]
-  }
-}
+import type { GitHubReviewComment, GitHubReviewPayload } from './review-formatter'
 
 export interface PullResponseData {
   number: number
@@ -88,24 +61,13 @@ export interface ListIssueCommentsParams {
   issue_number: number
 }
 
-export interface CreateReviewComment {
-  path: string
-  line?: number
-  side?: 'LEFT' | 'RIGHT'
-  /** Provide together with start_side for multi-line comments. */
-  start_line?: number
-  start_side?: 'LEFT' | 'RIGHT'
-  body: string
-  in_reply_to?: number
-}
-
 export interface CreateReviewParams {
   owner: string
   repo: string
   pull_number: number
   body?: string
   event?: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
-  comments?: CreateReviewComment[]
+  comments?: GitHubReviewComment[]
 }
 
 export interface CreateReviewResponse {
@@ -114,36 +76,41 @@ export interface CreateReviewResponse {
   html_url: string
 }
 
+export interface CreateReplyParams {
+  owner: string
+  repo: string
+  pull_number: number
+  /** The parent review-comment id being replied to. */
+  comment_id: number
+  body: string
+}
+
+export interface CompareCommitsParams {
+  owner: string
+  repo: string
+  /** GitHub's `base...head` basehead syntax. */
+  basehead: string
+}
+
+export interface CompareCommitsData {
+  ahead_by: number
+  behind_by: number
+  total_commits: number
+}
+
 export interface OctokitLike {
-  search: {
-    issuesAndPullRequests(params: SearchParams): Promise<SearchResponse>
-  }
   pulls: {
     get(params: PullGetParams): Promise<{ data: PullResponseData | string }>
     listReviewComments(params: ListReviewCommentsParams): Promise<{ data: ReviewCommentData[] }>
     createReview(params: CreateReviewParams): Promise<{ data: CreateReviewResponse }>
+    createReplyForReviewComment(params: CreateReplyParams): Promise<{ data: { id: number } }>
   }
   issues: {
     listComments(params: ListIssueCommentsParams): Promise<{ data: IssueCommentData[] }>
   }
-}
-
-export interface PullRequestSummary {
-  id: number
-  number: number
-  title: string
-  repo: string
-  author: string
-  state: 'open' | 'draft' | 'merged' | 'closed'
-  url: string
-  updatedAt: string
-  commentCount: number
-}
-
-export interface InboxResult {
-  mine: PullRequestSummary[]
-  reviewRequested: PullRequestSummary[]
-  recentlyMerged: PullRequestSummary[]
+  repos: {
+    compareCommitsWithBasehead(params: CompareCommitsParams): Promise<{ data: CompareCommitsData }>
+  }
 }
 
 export interface PullRequestDetails {
@@ -156,6 +123,10 @@ export interface PullRequestDetails {
   state: 'open' | 'draft' | 'merged' | 'closed'
   baseRef: string
   headRef: string
+  /** The head commit SHA — the exact revision the PR Worktree is materialized at. */
+  headSha: string
+  /** The base commit SHA the PR merges into. */
+  baseSha: string
   url: string
   commentCount: number
   reviewCommentCount: number
@@ -189,26 +160,8 @@ export interface ConversationComment {
   createdAt: string
 }
 
-const QUERIES = {
-  mine: 'is:open is:pr author:@me archived:false',
-  reviewRequested: 'is:open is:pr review-requested:@me archived:false',
-  recentlyMerged: (since: string) => `is:pr is:merged author:@me archived:false merged:>=${since}`
-}
-
 export class GitHubClient {
   constructor(private readonly octokit: OctokitLike) {}
-
-  async listInvolvingPRs(now: Date = new Date()): Promise<InboxResult> {
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10)
-    const [mine, reviewRequested, recentlyMerged] = await Promise.all([
-      this.search(QUERIES.mine),
-      this.search(QUERIES.reviewRequested),
-      this.search(QUERIES.recentlyMerged(sevenDaysAgo))
-    ])
-    return { mine, reviewRequested, recentlyMerged }
-  }
 
   async getPR(owner: string, repo: string, pull_number: number): Promise<PullRequestDetails> {
     const response = await this.octokit.pulls.get({ owner, repo, pull_number })
@@ -230,6 +183,8 @@ export class GitHubClient {
       state,
       baseRef: data.base.ref,
       headRef: data.head.ref,
+      headSha: data.head.sha,
+      baseSha: data.base.sha,
       url: data.html_url,
       commentCount: data.comments,
       reviewCommentCount: data.review_comments,
@@ -270,15 +225,44 @@ export class GitHubClient {
     owner: string,
     repo: string,
     pull_number: number,
-    payload: { body: string; event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'; comments: CreateReviewComment[] }
+    payload: GitHubReviewPayload
   ): Promise<CreateReviewResponse> {
+    const { replies, ...review } = payload
     const response = await this.octokit.pulls.createReview({
       owner,
       repo,
       pull_number,
-      ...payload
+      ...review
     })
+    // Replies can't ride in createReview's comments array (that endpoint
+    // has no in_reply_to and 422s if one is sent). Post each against its
+    // parent review comment after the batched review lands, so one user
+    // "submit" stays one logical action.
+    for (const reply of replies) {
+      await this.octokit.pulls.createReplyForReviewComment({
+        owner,
+        repo,
+        pull_number,
+        comment_id: reply.inReplyTo,
+        body: reply.body
+      })
+    }
     return response.data
+  }
+
+  /**
+   * How many commits `head` is ahead of `base`. Used to report the new-commit
+   * count in the staleness banner when the PR gains commits mid-session — base
+   * is the head SHA the session was built at, head is the PR's current head SHA.
+   */
+  async commitsAhead(owner: string, repo: string, base: string, head: string): Promise<number> {
+    if (base === head) return 0
+    const response = await this.octokit.repos.compareCommitsWithBasehead({
+      owner,
+      repo,
+      basehead: `${base}...${head}`
+    })
+    return response.data.ahead_by
   }
 
   async getPRConversation(owner: string, repo: string, pull_number: number): Promise<ConversationComment[]> {
@@ -293,38 +277,5 @@ export class GitHubClient {
       author: c.user?.login ?? 'unknown',
       createdAt: c.created_at
     }))
-  }
-
-  private async search(q: string): Promise<PullRequestSummary[]> {
-    const response = await this.octokit.search.issuesAndPullRequests({
-      q,
-      per_page: 50,
-      sort: 'updated',
-      order: 'desc'
-    })
-    return response.data.items.map(normalizeItem)
-  }
-}
-
-function normalizeItem(item: SearchResponseItem): PullRequestSummary {
-  const repoFromUrl = item.repository_url.replace('https://api.github.com/repos/', '')
-  const merged = item.pull_request?.merged_at != null
-  const state: PullRequestSummary['state'] = merged
-    ? 'merged'
-    : item.draft
-      ? 'draft'
-      : item.state === 'closed'
-        ? 'closed'
-        : 'open'
-  return {
-    id: item.id,
-    number: item.number,
-    title: item.title,
-    repo: repoFromUrl,
-    author: item.user?.login ?? 'unknown',
-    state,
-    url: item.html_url,
-    updatedAt: item.updated_at,
-    commentCount: item.comments
   }
 }

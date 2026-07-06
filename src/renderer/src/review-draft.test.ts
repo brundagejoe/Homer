@@ -7,11 +7,7 @@ import {
   type DraftState
 } from './review-draft'
 
-const target: ReviewTarget = {
-  kind: 'local',
-  repoPath: '/repo',
-  source: { type: 'working-tree-vs-head' }
-}
+const target: ReviewTarget = { owner: 'o', repo: 'r', number: 7 }
 
 const snapshot: DiffSnapshot = {
   files: [{ path: 'a.ts', status: 'modified', isBinary: false, patch: '@@' }]
@@ -121,7 +117,15 @@ describe('reviewDraftReducer', () => {
   test('setSummary / setEvent / refreshSnapshot are no-ops without a pending review', () => {
     expect(reviewDraftReducer(start(), { type: 'setSummary', summary: 'x', now: 1 })[1].kind).toBe('none')
     expect(reviewDraftReducer(start(), { type: 'setEvent', event: 'APPROVE', now: 1 })[1].kind).toBe('none')
-    expect(reviewDraftReducer(start(), { type: 'refreshSnapshot', snapshot, now: 1 })[1].kind).toBe('none')
+    expect(
+      reviewDraftReducer(start(), {
+        type: 'refreshSnapshot',
+        snapshot,
+        carried: [],
+        orphaned: [],
+        now: 1
+      })[1].kind
+    ).toBe('none')
   })
 
   test('setSummary updates and persists when a review exists', () => {
@@ -132,11 +136,79 @@ describe('reviewDraftReducer', () => {
     expect(effect.kind).toBe('persist')
   })
 
-  test('refreshSnapshot swaps the frozen snapshot, keeping comments', () => {
+  test('refreshSnapshot swaps the frozen snapshot, keeping survivors', () => {
     let state = reviewDraftReducer(start(), { type: 'startReview', snapshot, now: 1 })[0]
     const fresh: DiffSnapshot = { files: [] }
-    const [next] = reviewDraftReducer(state, { type: 'refreshSnapshot', snapshot: fresh, now: 5 })
+    const [next] = reviewDraftReducer(state, {
+      type: 'refreshSnapshot',
+      snapshot: fresh,
+      carried: [],
+      orphaned: [],
+      now: 5
+    })
     expect(next.pending!.snapshot).toBe(fresh)
+  })
+
+  test('refreshSnapshot applies the caller-computed split: carried replace comments, orphans append', () => {
+    const oldSnap: DiffSnapshot = { files: [] }
+    let state = reviewDraftReducer(start(), { type: 'startReview', snapshot: oldSnap, now: 1 })[0]
+    const keep = buildComment('keep-c', { path: 'a.ts', anchor: { lineNumber: 1, side: 'new' } })
+    const drop = buildComment('drop-c', { path: 'a.ts', anchor: { lineNumber: 2, side: 'new' } })
+    for (const c of [keep, drop]) {
+      state = reviewDraftReducer(state, { type: 'addDraft', comment: c })[0]
+      state = reviewDraftReducer(state, { type: 'commitComment', id: c.id, snapshot: oldSnap, now: 1 })[0]
+    }
+    const newSnap: DiffSnapshot = { files: [] }
+    const [next, effect] = reviewDraftReducer(state, {
+      type: 'refreshSnapshot',
+      snapshot: newSnap,
+      carried: [keep],
+      orphaned: [drop],
+      now: 9
+    })
+    expect(next.pending!.lineComments.map(c => c.id)).toEqual(['keep-c'])
+    expect(next.pending!.orphanedComments!.map(c => c.id)).toEqual(['drop-c'])
+    expect(next.pending!.snapshot).toBe(newSnap)
+    expect(effect.kind).toBe('persist')
+  })
+
+  test('refreshSnapshot accumulates orphans across successive refreshes', () => {
+    const snap: DiffSnapshot = { files: [] }
+    let state = reviewDraftReducer(start(), { type: 'startReview', snapshot: snap, now: 1 })[0]
+    const first = buildComment('o1', { path: 'a.ts', anchor: { lineNumber: 1, side: 'new' } })
+    const second = buildComment('o2', { path: 'a.ts', anchor: { lineNumber: 2, side: 'new' } })
+    state = reviewDraftReducer(state, {
+      type: 'refreshSnapshot',
+      snapshot: snap,
+      carried: [],
+      orphaned: [first],
+      now: 2
+    })[0]
+    const [next] = reviewDraftReducer(state, {
+      type: 'refreshSnapshot',
+      snapshot: snap,
+      carried: [],
+      orphaned: [second],
+      now: 3
+    })
+    expect(next.pending!.orphanedComments!.map(c => c.id)).toEqual(['o1', 'o2'])
+  })
+
+  test('dismissOrphan removes one flagged orphan and persists', () => {
+    const snap: DiffSnapshot = { files: [] }
+    let state = reviewDraftReducer(start(), { type: 'startReview', snapshot: snap, now: 1 })[0]
+    const orphan = buildComment('c1', { path: 'a.ts', anchor: { lineNumber: 1, side: 'new' } })
+    state = reviewDraftReducer(state, {
+      type: 'refreshSnapshot',
+      snapshot: snap,
+      carried: [],
+      orphaned: [orphan],
+      now: 2
+    })[0]
+    expect(state.pending!.orphanedComments!.map(c => c.id)).toEqual(['c1'])
+    const [next, effect] = reviewDraftReducer(state, { type: 'dismissOrphan', id: 'c1', now: 3 })
+    expect(next.pending!.orphanedComments).toEqual([])
+    expect(effect.kind).toBe('persist')
   })
 
   test('discard clears state and emits a delete effect', () => {
