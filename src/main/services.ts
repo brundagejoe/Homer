@@ -13,6 +13,8 @@ import { GuideStore } from './guide-store'
 import { SettingsStore } from './settings-store'
 import { resolveAgentConfig, type McpBridgeSpec } from './agent-config'
 import { resolveRepoPath } from './launch'
+import { resolveRepoForTarget } from './repo-discovery'
+import type { GuideRequest } from './guide-source'
 
 /**
  * Composition root for the main process: owns the app's long-lived services as
@@ -105,6 +107,21 @@ export function settingsStore(): SettingsStore {
   return settingsStoreInstance
 }
 
+/**
+ * Resolve the source repo the PR Worktree is materialized from, for one PR — the
+ * composition wrapper that gathers the launch context (`--repo=` → `DV_REPO` →
+ * cwd) and the configured repo roots, then applies the resolution policy in
+ * `resolveRepoForTarget` (verified match wins; launch context is a last resort;
+ * else `RepoNotFoundError`).
+ */
+export async function resolveSourceRepo(request: GuideRequest): Promise<string> {
+  return resolveRepoForTarget({
+    target: { owner: request.owner, repo: request.repo },
+    launchContext: resolveRepoPath(process.argv, process.env, process.cwd()),
+    roots: settingsStore().getRepoRoots()
+  })
+}
+
 let guideSourceInstance: GuideSource | null = null
 /**
  * The Guide generation seam. Default is the real `claude` Agent (`AgentRunner`)
@@ -125,11 +142,12 @@ export function guideSource(): GuideSource {
     const runner = new AgentRunner({
       worktrees: worktreeManager(),
       github: githubClient,
-      // The source repo the worktree is materialized from. When `homer` is run
-      // inside the repo (dev flow) this is the launch cwd; when launched from a
-      // globally-installed `.app` (cwd `/`), the `homer` shim passes the reviewer's
-      // repo via `--repo=`. See `resolveRepoPath`.
-      repoPath: resolveRepoPath(process.argv, process.env, process.cwd()),
+      // The source repo the worktree is materialized from, resolved per
+      // generation from the PR's owner/repo: the launch context if it's a clone
+      // of this PR's repo, else an auto-discovered clone under the configured
+      // repo roots (`resolveSourceRepo`). Lazy — so a cached Guide replays
+      // without needing a local clone at all.
+      sourceRepoPath: resolveSourceRepo,
       config: resolveAgentConfig(toolBridgeSpec()),
       // Read the effective custom guidance lazily, per run, so a Settings edit
       // takes effect on the next generation without restarting the app. `null`
