@@ -2,10 +2,9 @@
 
 Homer is a local, reviewer-side macOS desktop app for reviewing someone else's GitHub PR. You launch `homer <pr-url>` from inside the repo, and it spawns your local `claude` CLI as an autonomous **Agent** against an isolated checkout of the PR. The Agent streams back a **Guide** — a scrollytelling story of small **Sections** (tight prose plus the exact code each one is about, changed and relevant unchanged context) that walk you through the *intent* of the change. You read the Guide, then review the full **Diff** — which flags anything the Guide didn't narrate so nothing hides — drafting one batched **Review** you submit to GitHub. Named for the storyteller: Homer tells the story of a PR.
 
-<!-- screenshot: Guide tab -->
-<!-- screenshot: Diff tab -->
+![Homer's Guide tab — a scrollytelling walkthrough of a pull request, narrative on the left and the code each Section references on the right](./docs/screenshot-guide.png)
 
-> Screenshots to be added.
+<sub>Homer reviewing its own pull request: the Guide tab, narrative Sections beside the code they explain.</sub>
 
 ## Prerequisites
 
