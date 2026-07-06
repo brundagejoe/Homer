@@ -1,6 +1,7 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import type { DiffLineAnnotation } from '@pierre/diffs'
 import { Markdown } from './Markdown'
+import { clearDraftBody, getDraftBody, setDraftBody, subscribeDraftBody } from './draft-body-store'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Select } from '@/components/ui/select'
@@ -83,10 +84,17 @@ export function makeReviewAnnotationRenderer({
     if (edit) {
       return (
         <PendingCommentEditor
+          key={id}
           comment={edit.comment}
-          onChange={body => draft.updateBody(id, body)}
-          onSubmit={() => draft.commit(id)}
-          onCancel={() => draft.cancel(id)}
+          onSubmit={body => {
+            draft.updateBody(id, body)
+            draft.commit(id)
+            clearDraftBody(id)
+          }}
+          onCancel={() => {
+            draft.cancel(id)
+            clearDraftBody(id)
+          }}
         />
       )
     }
@@ -147,24 +155,31 @@ export function ExistingThreadAnnotation({
 }
 
 /**
- * Editing state for an inline draft comment. The body lives in React
- * state (separate from the pending review on disk) so typing doesn't
- * fight Pierre's snapshot cache, and cancelling a brand-new draft
- * abandons it cleanly without ever touching disk.
+ * Editing state for an inline draft comment. The in-progress body lives in an
+ * EXTERNAL per-comment store (see draft-body-store), not the Window-level review
+ * draft: a keystroke re-renders only this editor (not every FileDiff panel in
+ * the Guide, which made typing crawl), and the text survives Pierre re-rendering
+ * the annotation node. It's flushed into the draft only on submit; cancelling a
+ * brand-new draft abandons it without ever touching disk.
  */
 export function PendingCommentEditor({
   comment,
-  onChange,
   onSubmit,
   onCancel
 }: {
   comment: LineComment
-  onChange: (body: string) => void
-  onSubmit: () => void
+  onSubmit: (body: string) => void
   onCancel: () => void
 }) {
+  const id = comment.id
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const isReply = comment.inReplyToId != null
+
+  const body = useSyncExternalStore(
+    useCallback(cb => subscribeDraftBody(id, cb), [id]),
+    useCallback(() => getDraftBody(id, comment.body), [id, comment.body])
+  )
+
   useEffect(() => {
     textareaRef.current?.focus()
   }, [])
@@ -181,14 +196,17 @@ export function PendingCommentEditor({
       if (node?.closest?.('[data-comment-editor]')) return
       onCancel()
     }
-    const id = window.setTimeout(() => document.addEventListener('mousedown', onDown), 0)
+    const timer = window.setTimeout(() => document.addEventListener('mousedown', onDown), 0)
     return () => {
-      window.clearTimeout(id)
+      window.clearTimeout(timer)
       document.removeEventListener('mousedown', onDown)
     }
   }, [onCancel])
-  const canSubmit = comment.body.trim().length > 0
+  const canSubmit = body.trim().length > 0
   const range = formatLineRange(comment.startLineNumber, comment.lineNumber)
+  const submit = (): void => {
+    if (canSubmit) onSubmit(body)
+  }
   return (
     <div
       data-comment-editor
@@ -199,8 +217,8 @@ export function PendingCommentEditor({
       </div>
       <Textarea
         ref={textareaRef}
-        value={comment.body}
-        onChange={e => onChange(e.target.value)}
+        value={body}
+        onChange={e => setDraftBody(id, e.target.value)}
         rows={3}
         placeholder={isReply ? 'Write a reply…' : 'Write a comment…'}
         className="w-full text-[12.5px]"
@@ -212,7 +230,7 @@ export function PendingCommentEditor({
           if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSubmit) {
             e.preventDefault()
             e.stopPropagation()
-            onSubmit()
+            submit()
           } else if (e.key === 'Escape') {
             e.preventDefault()
             e.stopPropagation()
@@ -224,7 +242,7 @@ export function PendingCommentEditor({
         <Button size="sm" onClick={onCancel}>
           Cancel
         </Button>
-        <Button variant="primary" size="sm" onClick={onSubmit} disabled={!canSubmit}>
+        <Button variant="primary" size="sm" onClick={submit} disabled={!canSubmit}>
           Add review comment
         </Button>
       </div>
