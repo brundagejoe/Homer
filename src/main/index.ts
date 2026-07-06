@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, nativeTheme, shell } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { join } from 'node:path'
 import { registerIpcHandlers } from './ipc'
@@ -93,7 +93,9 @@ function openOrNavigate(argv: string[]): void {
     icon: APP_ICON,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
-    backgroundColor: '#ffffff',
+    // Match the renderer's light/dark surface so there's no white flash on
+    // launch (and no white frame around a dark UI) in dark mode.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff',
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
@@ -101,6 +103,15 @@ function openOrNavigate(argv: string[]): void {
     }
   })
   attachBoundsPersistence(win)
+
+  // Keep the native window background in step with OS theme changes while open.
+  const applyThemeBackground = (): void => {
+    if (!win.isDestroyed()) {
+      win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff')
+    }
+  }
+  nativeTheme.on('updated', applyThemeBackground)
+  win.on('closed', () => nativeTheme.removeListener('updated', applyThemeBackground))
 
   mainWindow = win
   win.on('closed', () => {
