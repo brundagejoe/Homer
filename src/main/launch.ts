@@ -7,6 +7,7 @@ export interface PrTarget {
 }
 
 const PR_FLAG = '--pr='
+const REPO_FLAG = '--repo='
 
 /**
  * Resolve a launch from CLI argv: the single entry point is a GitHub PR
@@ -26,6 +27,33 @@ export function resolveLaunchTarget(argv: string[]): PrTarget | null {
 /** Encode a resolved target as renderer launch args (a single `--pr=` flag). */
 export function buildLaunchArgs(target: PrTarget | null): string[] {
   return target ? [`${PR_FLAG}${target.owner}/${target.repo}/${target.number}`] : []
+}
+
+/**
+ * Resolve which repo the app treats as the source repo for the PR Worktree /
+ * git / gh context. Precedence:
+ *   1. an explicit `--repo=<abs path>` launch flag — set by the global `dv`
+ *      shim, which captures the user's `$PWD` because a globally-installed
+ *      `.app` launches with cwd `/`, not the repo the reviewer ran `dv` in;
+ *   2. the `DV_REPO` env var (a scripting/testing escape hatch);
+ *   3. the launch cwd — the in-repo dev flow (`bin/dv`), where cwd already is
+ *      the repo.
+ *
+ * Pure so it can be unit-tested without a real process. Known limitation: on a
+ * second `dv` invocation the already-running window keeps the repo it was first
+ * launched with (the single-instance path only re-navigates the PR) — full
+ * multi-repo switching is out of scope here.
+ */
+export function resolveRepoPath(
+  argv: string[],
+  env: Record<string, string | undefined>,
+  cwd: string
+): string {
+  const flag = argv.find(a => a.startsWith(REPO_FLAG))
+  const fromFlag = flag?.slice(REPO_FLAG.length)
+  if (fromFlag) return fromFlag
+  if (env.DV_REPO) return env.DV_REPO
+  return cwd
 }
 
 /** Decode the `--pr=` launch flag back into a target (used by the preload). */

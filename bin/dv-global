@@ -1,0 +1,34 @@
+#!/bin/sh
+# homer-dv-shim
+# dv — launch the installed Homer app for a GitHub pull request, from any repo.
+#   dv https://github.com/owner/repo/pull/N   → review that PR
+#
+# Homer resolves the *target repo* from the directory you run `dv` in (that's
+# where it fetches the PR head SHA, materializes the PR Worktree, and reads `gh`
+# auth). A globally-installed macOS `.app` launches with cwd `/`, NOT your repo,
+# so this shim captures your current directory and passes it as `--repo=`
+# alongside the PR URL. Run `dv` from inside the repo the PR belongs to.
+#
+# A second `dv <pr-url>` while Homer is already open focuses the window and
+# points it at the new PR (the repo of an already-open window is not switched —
+# quit Homer first to review a PR in a different repo).
+#
+# Installed by scripts/install.sh. The in-repo dev launcher is bin/dv.
+set -e
+
+# Prefer the app installed in /Applications; otherwise let Launch Services find
+# it by name (Spotlight-indexed), so a user who put Homer.app elsewhere still works.
+APP="/Applications/Homer.app"
+[ -d "$APP" ] || APP="Homer"
+
+if [ -z "$1" ]; then
+  echo "usage: dv <github-pr-url>" >&2
+  exit 1
+fi
+
+# `open -n` forces a new instance so the args are delivered even when Homer is
+# already running: the single-instance lock hands this argv to the live window.
+# Everything after `--args` becomes the app's process argv, which the main
+# process parses (`--repo=` → repoPath, the URL → the PR to review).
+# `open` returns immediately, leaving your terminal free.
+exec open -na "$APP" --args --repo="$PWD" "$1"

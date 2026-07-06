@@ -12,6 +12,7 @@ import { CachingGuideSource } from './caching-guide-source'
 import { GuideStore } from './guide-store'
 import { SettingsStore } from './settings-store'
 import { resolveAgentConfig, type McpBridgeSpec } from './agent-config'
+import { resolveRepoPath } from './launch'
 
 /**
  * Composition root for the main process: owns the app's long-lived services as
@@ -124,9 +125,11 @@ export function guideSource(): GuideSource {
     const runner = new AgentRunner({
       worktrees: worktreeManager(),
       github: githubClient,
-      // The app is launched from inside the PR's repo (`dv <pr-url>`), so the
-      // launch cwd is the source repo the worktree is materialized from.
-      repoPath: process.cwd(),
+      // The source repo the worktree is materialized from. When `dv` is run
+      // inside the repo (dev flow) this is the launch cwd; when launched from a
+      // globally-installed `.app` (cwd `/`), the `dv` shim passes the reviewer's
+      // repo via `--repo=`. See `resolveRepoPath`.
+      repoPath: resolveRepoPath(process.argv, process.env, process.cwd()),
       config: resolveAgentConfig(toolBridgeSpec()),
       // Read the effective custom guidance lazily, per run, so a Settings edit
       // takes effect on the next generation without restarting the app. `null`
