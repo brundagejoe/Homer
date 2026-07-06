@@ -8,6 +8,8 @@ import { GitHubClient, OctokitLike } from './github-client'
 import { PrWorktreeManager } from './pr-worktree-manager'
 import { GuideSource, StubGuideSource } from './guide-source'
 import { AgentRunner } from './agent-runner'
+import { CachingGuideSource } from './caching-guide-source'
+import { GuideStore } from './guide-store'
 import { resolveAgentConfig, type McpBridgeSpec } from './agent-config'
 
 /**
@@ -75,19 +77,37 @@ function toolBridgeSpec(): McpBridgeSpec {
   }
 }
 
+let guideStoreInstance: GuideStore | null = null
+/**
+ * The disposable Guide cache. Lives under Electron's `userData` (outside any
+ * user repo). Losing it only costs a regeneration, so it is a cache, not durable
+ * state — contrast `pendingReviewStore`, which is the one non-regenerable store.
+ */
+export function guideStore(): GuideStore {
+  if (!guideStoreInstance) {
+    guideStoreInstance = new GuideStore({ cacheDir: join(app.getPath('userData'), 'guide-cache') })
+  }
+  return guideStoreInstance
+}
+
 let guideSourceInstance: GuideSource | null = null
 /**
- * The Guide generation seam. Default is the real `claude` Agent (`AgentRunner`),
- * behind the same `GuideSource` interface the stub used — no caller changes.
+ * The Guide generation seam. Default is the real `claude` Agent (`AgentRunner`)
+ * wrapped in `CachingGuideSource`: re-opening a PR at a head SHA already
+ * generated for replays the cached Guide instantly with no Agent spawn, while a
+ * new/absent SHA generates and then caches. Both are the same `GuideSource`
+ * interface, so callers (the `guide:generate` IPC handler) are unaffected.
+ *
  * Set `DV_GUIDE_STUB=1` to fall back to the offline `StubGuideSource` for
- * dev/tests without spending a subscription run.
+ * dev/tests without spending a subscription run; the stub is left un-cached (it
+ * ignores the head SHA and never needs a GitHub client) so it stays offline.
  */
 export function guideSource(): GuideSource {
   if (guideSourceInstance) return guideSourceInstance
   if (process.env.DV_GUIDE_STUB === '1') {
     guideSourceInstance = new StubGuideSource()
   } else {
-    guideSourceInstance = new AgentRunner({
+    const runner = new AgentRunner({
       worktrees: worktreeManager(),
       github: githubClient,
       // The app is launched from inside the PR's repo (`dv <pr-url>`), so the
@@ -95,6 +115,10 @@ export function guideSource(): GuideSource {
       repoPath: process.cwd(),
       config: resolveAgentConfig(toolBridgeSpec())
     })
+    // The head SHA — the last axis of the cache key — is resolved once in the
+    // `guide:generate` IPC handler and travels in the `GuideRequest`, so the
+    // coordinator needs only the inner Agent and the store.
+    guideSourceInstance = new CachingGuideSource({ inner: runner, store: guideStore() })
   }
   return guideSourceInstance
 }

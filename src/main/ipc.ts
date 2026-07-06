@@ -91,7 +91,18 @@ export function registerIpcHandlers(): void {
       const signal = controller.signal
 
       try {
-        for await (const event of guideSource().generate(target, signal)) {
+        // Resolve the PR head SHA exactly ONCE here — it's part of the Guide's
+        // identity, so keying the cache and generating the worktree must agree on
+        // it. It then travels in the GuideRequest; the Agent no longer re-derives
+        // it. When `gh` isn't authed we can't resolve it, so we pass through and
+        // let the source surface the auth error (the offline stub ignores it).
+        const client = await githubClient()
+        const headSha = client
+          ? (await client.getPR(target.owner, target.repo, target.number)).headSha
+          : ''
+        if (signal.aborted || sender.isDestroyed()) return
+
+        for await (const event of guideSource().generate({ ...target, headSha }, signal)) {
           if (signal.aborted || sender.isDestroyed()) return
           // Every event carries the generation id so the renderer can drop any
           // late event from a superseded run (belt-and-suspenders with abort).

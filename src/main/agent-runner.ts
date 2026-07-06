@@ -69,10 +69,13 @@ export class AgentRunner implements GuideSource {
       throw new Error('Cannot generate the Guide: the GitHub CLI (`gh`) is not authenticated.')
     }
 
+    // getPR/getPRDiff still fetch the prompt metadata (title/body/diff); the head
+    // SHA the worktree is materialized at comes from `request.headSha` — resolved
+    // once upstream — so it can't diverge from the SHA the cache is keyed by.
     const pr = await client.getPR(request.owner, request.repo, request.number)
     const diff = await client.getPRDiff(request.owner, request.repo, request.number)
     if (signal?.aborted) return
-    const worktreePath = await this.deps.worktrees.acquire(this.deps.repoPath, pr.headSha)
+    const worktreePath = await this.deps.worktrees.acquire(this.deps.repoPath, request.headSha)
     if (signal?.aborted) return
 
     const host = new GuideToolHost(makeResolver(worktreePath, diff))

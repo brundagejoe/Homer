@@ -10,6 +10,13 @@ export interface GuideRequest {
   owner: string
   repo: string
   number: number
+  /**
+   * The PR head SHA this Guide is derived from — part of the Guide's identity
+   * (CONTEXT.md: "a Guide is derived from one PR at one head SHA"). Resolved
+   * ONCE by the caller so the cache key and the generated worktree can never
+   * disagree about which SHA the Guide is for.
+   */
+  headSha: string
 }
 
 /**
