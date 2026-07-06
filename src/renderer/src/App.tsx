@@ -60,7 +60,7 @@ export default function App() {
     return () => window.removeEventListener(HELP_EVENT, onShow)
   }, [])
 
-  // A second `dv <pr-url>` focuses this window and points it at that PR.
+  // A second `homer <pr-url>` focuses this window and points it at that PR.
   useEffect(() => {
     if (!window.api?.onNavigate) return
     return window.api.onNavigate((r: NavRoute) => setTarget(r.target))
@@ -88,14 +88,14 @@ export default function App() {
 
 /**
  * Shown when the app is launched without a PR URL. The only V1 entry
- * point is `dv <github-pr-url>`, so there is nothing to render — we
+ * point is `homer <github-pr-url>`, so there is nothing to render — we
  * explain how to launch rather than fall back to a discovery surface.
  */
 function NoPrView() {
   return (
     <main className="h-screen flex flex-col bg-surface">
       <TitleBar>
-        <span className="flex-1 truncate font-semibold text-fg">Guided PR Review</span>
+        <span className="flex-1 truncate font-semibold text-fg">Homer</span>
         <GhAuthIndicator />
         <SettingsButton />
         <HelpButton />
@@ -107,7 +107,7 @@ function NoPrView() {
             Launch a review from your terminal inside a repo:
           </p>
           <code className="font-mono text-[12.5px] bg-sidebar border border-hairline rounded-md px-2.5 py-1.5">
-            dv https://github.com/owner/repo/pull/123
+            homer https://github.com/owner/repo/pull/123
           </code>
         </div>
       </section>

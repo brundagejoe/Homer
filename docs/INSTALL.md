@@ -4,15 +4,14 @@ Homer is a local, reviewer-side desktop tool for reviewing someone else's
 GitHub PR. You launch it from your terminal, inside a repo, with a PR URL:
 
 ```sh
-dv https://github.com/owner/repo/pull/123
+homer https://github.com/owner/repo/pull/123
 ```
 
-This guide covers the **global install** — getting a `dv` command on your PATH
+This guide covers the **global install** — getting a `homer` command on your PATH
 so you can run it from *any* repo, not just this cloned checkout. (For hacking
-on Homer itself, use `bun run dev` / `bin/dv`; see the repo README.)
+on Homer itself, use `bun run dev` / `bin/homer`; see the repo README.)
 
-> Product name: **Homer**. Command: **`dv`**. They're deliberately decoupled
-> (ADR 0004).
+> Product name: **Homer**. Command: **`homer`** (ADR 0004).
 
 ## Prerequisites
 
@@ -36,17 +35,17 @@ This:
 
 1. builds the app (`bun run dist` → `dist/…/Homer.app`),
 2. copies **`Homer.app` to `/Applications`**,
-3. installs the **`dv`** shim to a PATH directory (`/usr/local/bin` if present,
+3. installs the **`homer`** shim to a PATH directory (`/usr/local/bin` if present,
    else `~/.local/bin` — it uses `sudo` only if the directory needs it), and
 4. prints next steps (PATH + the Gatekeeper note below).
 
 It's idempotent — re-run it any time to reinstall over a previous version.
 
-## Using `dv` from any repo
+## Using `homer` from any repo
 
 ```sh
 cd ~/code/the-repo-the-pr-belongs-to
-dv https://github.com/owner/repo/pull/123
+homer https://github.com/owner/repo/pull/123
 ```
 
 Homer opens a single window with three tabs — **Activity · Guide · Diff** —
@@ -56,7 +55,7 @@ landing on Activity while the Guide generates in the background.
 belongs to (that's where it fetches the head SHA, materializes the PR Worktree,
 and reads `gh` auth). In the dev flow that repo is just the current directory.
 But a globally-installed macOS `.app` launches with cwd `/`, **not** your repo —
-so the `dv` shim captures your current directory and passes it to the app as a
+so the `homer` shim captures your current directory and passes it to the app as a
 `--repo=$PWD` launch flag next to the PR URL:
 
 ```sh
@@ -65,9 +64,9 @@ open -na "Homer" --args --repo="$PWD" "<pr-url>"
 
 The app resolves its repo path as: `--repo=` flag → `DV_REPO` env var →
 launch cwd (in that order — see `resolveRepoPath` in `src/main/launch.ts`).
-So **run `dv` from inside the repo the PR belongs to.**
+So **run `homer` from inside the repo the PR belongs to.**
 
-A second `dv <pr-url>` while Homer is already open focuses the window and points
+A second `homer <pr-url>` while Homer is already open focuses the window and points
 it at the new PR. Known limitation: the *repo* of an already-open window is not
 switched — quit Homer first if the new PR is in a different repo.
 
@@ -86,8 +85,8 @@ the quarantine flag on the copy it installs, but if you still get blocked:
 ./scripts/uninstall.sh
 ```
 
-Removes `/Applications/Homer.app` and the `dv` shim (only one carrying Homer's
-marker — it won't touch an unrelated `dv`). Cached PR Worktrees and Guides live
+Removes `/Applications/Homer.app` and the `homer` shim (only one carrying Homer's
+marker — it won't touch an unrelated `homer`). Cached PR Worktrees and Guides live
 under `~/Library/Application Support/Homer` and can be deleted manually.
 
 ## Homebrew status
@@ -117,8 +116,8 @@ To make that real we'd need, **per release**:
   prompt; a cask would still need a `--no-quarantine`-style workaround, i.e. no
   better than the install script here. Signing + notarizing (a separate
   follow-up) is what makes a cask genuinely nicer than the script.
-- **Casks don't provide the `dv` command.** A cask only stages the `.app`. We'd
-  still need a companion `binary` stanza or a separate formula to put `dv` on
+- **Casks don't provide the `homer` command.** A cask only stages the `.app`. We'd
+  still need a companion `binary` stanza or a separate formula to put `homer` on
   PATH — extra machinery the install script already handles in one place.
 - **Maintenance cost.** Every release means bumping `version` + `sha256` in the
   tap (manually or via a bot). Not worth it for a pre-release, single-maintainer

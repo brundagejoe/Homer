@@ -17,10 +17,10 @@
 # launch (the cask can't fix that without signing); `--no-quarantine` below is
 # the pragmatic escape hatch until the app is signed + notarized.
 #
-# This cask installs the .app but does NOT put `dv` on PATH — Homebrew casks
+# This cask installs the .app but does NOT put `homer` on PATH — Homebrew casks
 # only stage app bundles. A published distribution would add a companion
-# `binary` stanza pointing at a shim inside the bundle, or ship `dv` via a
-# separate formula. For now the install script owns the `dv` shim.
+# `binary` stanza pointing at a shim inside the bundle, or ship `homer` via a
+# separate formula. For now the install script owns the `homer` shim.
 
 cask "homer" do
   version "<<VERSION>>"          # e.g. "0.1.0"

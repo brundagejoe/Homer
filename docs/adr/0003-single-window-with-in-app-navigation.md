@@ -3,10 +3,10 @@
 The app owns exactly one window. Inside it you navigate between three
 surfaces — the **PR Inbox**, a **PR Review**, and **Local Mode** (a
 repo's working changes) — with an "‹ Inbox" back button and, from the
-inbox, a "local changes" entry. There is one CLI command, `dv`. Where it
+inbox, a "local changes" entry. There is one CLI command, `homer`. Where it
 lands depends on where it's launched: a PR URL opens that PR; a repo with
 active changes opens its Code view; anything else (a clean repo, no repo)
-opens the inbox. A second `dv` invocation focuses the existing window and
+opens the inbox. A second `homer` invocation focuses the existing window and
 navigates it in place rather than spawning a new one.
 
 The alternative was one `BrowserWindow` per surface — the inbox, each PR,

@@ -1,10 +1,8 @@
 # Product packaging: name, icon, and distribution
 
 The product is named **Homer** — the storyteller who tells the story of a
-PR. The CLI command stays `dv` (muscle memory, scriptability, and the
-launch flow in ADR 0003 all depend on it), so the command name and the
-product name are deliberately decoupled. The macOS bundle id is
-`com.brundagejoe.homer`; `productName` is `Homer`.
+PR — and the CLI command matches it: `homer <pr-url>`. The macOS bundle id
+is `com.brundagejoe.homer`; `productName` is `Homer`.
 
 We de-Electron-ify the shipped app so it reads as a product, not a dev
 build: the BrowserWindow title, the macOS menu bar, the dock, and the
@@ -36,9 +34,9 @@ prior product's out-of-scope list) and are a distribution follow-up.
 
 ## Global install (#35)
 
-`bin/dv` remains the **dev** launcher (runs Electron against this repo's
+`bin/homer` remains the **dev** launcher (runs Electron against this repo's
 `out/`). The **global** path installs the packaged `.app` to `/Applications`
-and a `dv` shim on `PATH` (`bin/dv-global`, installed by
+and a `homer` shim on `PATH` (`bin/homer-global`, installed by
 `scripts/install.sh`; removed by `scripts/uninstall.sh`). The full guide is
 `docs/INSTALL.md`.
 
@@ -51,14 +49,14 @@ single-instance lock hands the argv to the live window). The app resolves
 its repo path via `resolveRepoPath` (a pure, unit-tested helper):
 `--repo=` flag → `DV_REPO` env → cwd — the last case keeps the in-repo dev
 flow working unchanged. Switching the *repo* of an already-open window is a
-known limitation (a second `dv` only re-navigates the PR); full multi-repo
+known limitation (a second `homer` only re-navigates the PR); full multi-repo
 is out of scope.
 
 **Homebrew was evaluated and deferred.** A cask installs a *prebuilt,
 hosted* `.app`, so it requires a GitHub Release with a versioned `.dmg` URL
 + sha256 and a `homebrew-homer` tap — none of which exist yet — and it
 neither removes the Gatekeeper prompt for an unsigned build nor provides the
-`dv` command (casks only stage the app bundle). The install script is the
+`homer` command (casks only stage the app bundle). The install script is the
 recommended path until the app is signed/notarized and there's a
 CI-produced release per version. A ready-to-fill cask template lives at
 `packaging/homebrew/homer.rb`. See `docs/INSTALL.md` for the full tradeoff.

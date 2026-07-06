@@ -11,7 +11,7 @@ const REPO_FLAG = '--repo='
 
 /**
  * Resolve a launch from CLI argv: the single entry point is a GitHub PR
- * URL (`dv <pr-url>`). Returns the first argument that parses as a PR
+ * URL (`homer <pr-url>`). Returns the first argument that parses as a PR
  * URL, or null when none is present (the window then shows a
  * "paste a PR URL" state rather than the dead inbox/local-mode routes).
  */
@@ -32,15 +32,15 @@ export function buildLaunchArgs(target: PrTarget | null): string[] {
 /**
  * Resolve which repo the app treats as the source repo for the PR Worktree /
  * git / gh context. Precedence:
- *   1. an explicit `--repo=<abs path>` launch flag — set by the global `dv`
+ *   1. an explicit `--repo=<abs path>` launch flag — set by the global `homer`
  *      shim, which captures the user's `$PWD` because a globally-installed
- *      `.app` launches with cwd `/`, not the repo the reviewer ran `dv` in;
+ *      `.app` launches with cwd `/`, not the repo the reviewer ran `homer` in;
  *   2. the `DV_REPO` env var (a scripting/testing escape hatch);
- *   3. the launch cwd — the in-repo dev flow (`bin/dv`), where cwd already is
+ *   3. the launch cwd — the in-repo dev flow (`bin/homer`), where cwd already is
  *      the repo.
  *
  * Pure so it can be unit-tested without a real process. Known limitation: on a
- * second `dv` invocation the already-running window keeps the repo it was first
+ * second `homer` invocation the already-running window keeps the repo it was first
  * launched with (the single-instance path only re-navigates the PR) — full
  * multi-repo switching is out of scope here.
  */

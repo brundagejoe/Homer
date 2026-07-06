@@ -4,7 +4,7 @@ A local, reviewer-side tool for reviewing someone else's GitHub PR. Launched fro
 
 This product replaces the earlier local diff-viewer. The Electron shell, `gh` auth delegation, Pierre diff/tree renderers, the **Review** / **Line Comment** model, and SQLite persistence carry over; the goals and top-level views do not.
 
-**Product name: Homer** (the storyteller — Homer tells the story of a PR). The CLI command stays `dv`. macOS bundle id: `com.brundagejoe.homer`.
+**Product name: Homer** (the storyteller — Homer tells the story of a PR). The CLI command is `homer`. macOS bundle id: `com.brundagejoe.homer`.
 
 ## Language
 

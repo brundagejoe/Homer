@@ -7,7 +7,7 @@ const PR_FLAG = '--pr='
 
 /**
  * The PR this window was launched for, parsed from the `--pr=` flag the
- * main process builds from the `dv <pr-url>` argument. Null when launched
+ * main process builds from the `homer <pr-url>` argument. Null when launched
  * without a PR URL — the renderer then shows a "paste a PR URL" state.
  */
 const prFlag = process.argv.find(a => a.startsWith(PR_FLAG))
@@ -20,7 +20,7 @@ const prTarget = prFlag
   : null
 
 /** In-window navigation events pushed by the main process (a second
- *  `dv <pr-url>` invocation focuses this window and points it at that PR). */
+ *  `homer <pr-url>` invocation focuses this window and points it at that PR). */
 export type NavRoute = { kind: 'pr'; target: { owner: string; repo: string; number: number } }
 
 export type FileStatus = 'added' | 'modified' | 'deleted' | 'renamed'

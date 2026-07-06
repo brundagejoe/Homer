@@ -125,9 +125,9 @@ export function guideSource(): GuideSource {
     const runner = new AgentRunner({
       worktrees: worktreeManager(),
       github: githubClient,
-      // The source repo the worktree is materialized from. When `dv` is run
+      // The source repo the worktree is materialized from. When `homer` is run
       // inside the repo (dev flow) this is the launch cwd; when launched from a
-      // globally-installed `.app` (cwd `/`), the `dv` shim passes the reviewer's
+      // globally-installed `.app` (cwd `/`), the `homer` shim passes the reviewer's
       // repo via `--repo=`. See `resolveRepoPath`.
       repoPath: resolveRepoPath(process.argv, process.env, process.cwd()),
       config: resolveAgentConfig(toolBridgeSpec()),

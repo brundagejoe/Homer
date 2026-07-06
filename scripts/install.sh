@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# install.sh — build Homer, install it to /Applications, and put a global `dv`
-# on your PATH so you can run `dv <pr-url>` from inside any repo.
+# install.sh — build Homer, install it to /Applications, and put a global `homer`
+# on your PATH so you can run `homer <pr-url>` from inside any repo.
 #
 # Idempotent: re-run any time to reinstall over a previous install.
 # Uninstall with scripts/uninstall.sh.
@@ -9,7 +9,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="Homer.app"
 DEST_APP="/Applications/$APP_NAME"
-SHIM_SRC="$REPO_DIR/bin/dv-global"
+SHIM_SRC="$REPO_DIR/bin/homer-global"
 
 if [ "$(uname)" != "Darwin" ]; then
   echo "error: this installer supports macOS only." >&2
@@ -39,17 +39,17 @@ cp -R "$BUILT_APP" "$DEST_APP"
 # we just built locally avoids Gatekeeper hard-blocking the first launch.
 xattr -dr com.apple.quarantine "$DEST_APP" 2>/dev/null || true
 
-# --- Install the `dv` shim on PATH -----------------------------------------
+# --- Install the `homer` shim on PATH --------------------------------------
 install_to() {
   # $1 = target bin dir. Uses sudo only if the dir isn't writable.
   local dir="$1"
   if [ -w "$dir" ] || { [ ! -e "$dir" ] && mkdir -p "$dir" 2>/dev/null; }; then
-    install -m 0755 "$SHIM_SRC" "$dir/dv"
+    install -m 0755 "$SHIM_SRC" "$dir/homer"
   else
     echo "==> $dir needs elevated permissions; using sudo…"
-    sudo install -m 0755 "$SHIM_SRC" "$dir/dv"
+    sudo install -m 0755 "$SHIM_SRC" "$dir/homer"
   fi
-  SHIM_PATH="$dir/dv"
+  SHIM_PATH="$dir/homer"
 }
 
 SHIM_PATH=""
@@ -59,11 +59,11 @@ else
   # Homebrew-on-Apple-Silicon and clean systems may not have /usr/local/bin.
   install_to "$HOME/.local/bin"
 fi
-echo "==> Installed dv → $SHIM_PATH"
+echo "==> Installed homer → $SHIM_PATH"
 
 # --- Next steps -------------------------------------------------------------
 echo
-echo "Done. Homer is in /Applications and \`dv\` is at $SHIM_PATH."
+echo "Done. Homer is in /Applications and \`homer\` is at $SHIM_PATH."
 echo
 
 SHIM_DIR="$(dirname "$SHIM_PATH")"
@@ -83,4 +83,4 @@ echo
 echo "Prerequisites: 'gh' authenticated (gh auth login) and the 'claude' CLI"
 echo "signed in on your subscription."
 echo
-echo "Use it:  cd <the repo the PR belongs to>  &&  dv <github-pr-url>"
+echo "Use it:  cd <the repo the PR belongs to>  &&  homer <github-pr-url>"
