@@ -1,12 +1,10 @@
-import { clipboard, ipcMain } from 'electron'
-import { FileStatus, DiffSourceSpec } from './git-diff-provider'
+import { ipcMain } from 'electron'
+import { FileStatus } from './git-diff-provider'
 import { PendingReview, ReviewTarget } from './pending-review-store'
-import { toAgentPrompt, toGitHubReview } from './review-formatter'
+import { toGitHubReview } from './review-formatter'
 import { AuthStatus } from './gh-auth-resolver'
-import { InboxResult, PullRequestDetails, InlineComment, ConversationComment } from './github-client'
-import { splitPatchByFile } from '../shared/split-patch'
+import { PullRequestDetails, InlineComment, ConversationComment } from './github-client'
 import {
-  diffProvider,
   ghAuth,
   githubClient,
   guideSource,
@@ -15,13 +13,10 @@ import {
 } from './services'
 
 export const CHANNELS = {
-  getLocalDiff: 'git:local-diff',
   reviewGet: 'review:get',
   reviewUpsert: 'review:upsert',
   reviewDelete: 'review:delete',
-  reviewSubmitToAgent: 'review:submit-to-agent',
   ghAuthStatus: 'gh:auth-status',
-  githubListPRs: 'github:list-prs',
   githubGetPR: 'github:get-pr',
   githubGetPRDiff: 'github:get-pr-diff',
   githubGetPRInlineComments: 'github:get-pr-inline-comments',
@@ -43,32 +38,7 @@ export interface FileWithPatch {
   patch: string
 }
 
-export interface LocalDiffResult {
-  files: FileWithPatch[]
-}
-
 export function registerIpcHandlers(): void {
-  ipcMain.handle(
-    CHANNELS.getLocalDiff,
-    async (_e, args: { repoPath: string; source?: DiffSourceSpec }): Promise<LocalDiffResult> => {
-      const source = args.source ?? { type: 'working-tree-vs-head' as const }
-      const [data, rawPatch] = await Promise.all([
-        diffProvider().getDiff(args.repoPath, source),
-        diffProvider().getRawPatch(args.repoPath, source)
-      ])
-      const patches = new Map(splitPatchByFile(rawPatch).map(p => [p.path, p.patch]))
-      return {
-        files: data.files.map(f => ({
-          path: f.path,
-          oldPath: f.oldPath,
-          status: f.status,
-          isBinary: f.isBinary,
-          patch: patches.get(f.path) ?? ''
-        }))
-      }
-    }
-  )
-
   ipcMain.handle(CHANNELS.reviewGet, (_e, target: ReviewTarget): PendingReview | null =>
     pendingReviewStore().get(target)
   )
@@ -78,13 +48,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(CHANNELS.reviewDelete, (_e, target: ReviewTarget): void =>
     pendingReviewStore().delete(target)
   )
-  ipcMain.handle(CHANNELS.reviewSubmitToAgent, (_e, review: PendingReview): void => {
-    clipboard.writeText(toAgentPrompt(review))
-    pendingReviewStore().delete(review.target)
-  })
 
   ipcMain.handle(CHANNELS.reviewSubmitToGithub, async (_e, review: PendingReview): Promise<{ url: string }> => {
-    if (review.target.kind !== 'pr') throw new Error('submitToGithub requires a pr target')
     const client = await githubClient()
     if (!client) throw new Error('gh CLI is not authenticated')
     const payload = toGitHubReview(review)
@@ -122,12 +87,6 @@ export function registerIpcHandlers(): void {
   )
 
   ipcMain.handle(CHANNELS.ghAuthStatus, async (): Promise<AuthStatus> => ghAuth().status())
-
-  ipcMain.handle(CHANNELS.githubListPRs, async (): Promise<InboxResult> => {
-    const client = await githubClient()
-    if (!client) throw new Error('gh CLI is not authenticated')
-    return client.listInvolvingPRs()
-  })
 
   ipcMain.handle(
     CHANNELS.githubGetPR,

@@ -1,20 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CodeViewHandle } from '@pierre/diffs/react'
-import type { DiffLineAnnotation } from '@pierre/diffs'
 import { useFileTree, useFileTreeSelection } from '@pierre/trees/react'
 import { splitPatchByFile } from '../../shared/split-patch'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { ReviewSurface, useReviewSurfaceShell } from './ReviewSurface'
-import type { AnnotationMeta } from './diff-annotations'
+import { useReviewDraft, useReviewSubmit } from './useReviewDraft'
+import { buildAnnotationMap, type AnnotationMeta } from './diff-annotations'
+import { draftComments, makeReviewAnnotationRenderer, ReviewPanel } from './review-comments'
 import { buildHunkTargets, clampStep, firstHunkIndexForPath } from './diff-navigation'
+import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { PrTarget } from '../../preload'
+import type { DiffSnapshot, InlineComment, PendingReview, PrTarget, ReviewTarget } from '../../preload'
 
 type DiffFile = { path: string; patch: string }
 
 type Status =
   | { type: 'loading' }
-  | { type: 'loaded'; files: DiffFile[] }
+  | { type: 'loaded'; files: DiffFile[]; inline: InlineComment[] }
   | { type: 'error'; message: string }
 
 /**
@@ -22,10 +25,13 @@ type Status =
  * (Pierre diffs + file tree). Independent of the Agent/Guide — it fetches
  * the diff itself and works offline or on a generation failure.
  *
- * Read-only in this slice: no Line Comment authoring, no review panel
- * (that lands in a later slice). It reuses the review surface shell for
- * the tree / collapse / scroll mechanics and adds keyboard navigation
- * between files ("[" / "]") and hunks ("j" / "k").
+ * Authoring is ON here: draft anchored Line Comments from the gutter "+",
+ * reply to existing threads, write an overall summary, and submit one
+ * batched Review to the GitHub PR as approve / request-changes / comment.
+ * Comments accumulate into a durable Pending Review (SQLite) that survives
+ * app restart. The comment presentation, annotation dispatch, and review
+ * panel come from the shared `review-comments` kit; this view is the diff-
+ * specific wiring (fetch, file tree, hunk/file keyboard nav).
  */
 export function DiffView({ target }: { target: PrTarget }) {
   const [status, setStatus] = useState<Status>({ type: 'loading' })
@@ -33,10 +39,9 @@ export function DiffView({ target }: { target: PrTarget }) {
   useEffect(() => {
     let cancelled = false
     setStatus({ type: 'loading' })
-    window.api
-      .githubGetPRDiff(target)
-      .then(rawDiff => {
-        if (!cancelled) setStatus({ type: 'loaded', files: splitPatchByFile(rawDiff) })
+    Promise.all([window.api.githubGetPRDiff(target), window.api.githubGetPRInlineComments(target)])
+      .then(([rawDiff, inline]) => {
+        if (!cancelled) setStatus({ type: 'loaded', files: splitPatchByFile(rawDiff), inline })
       })
       .catch((err: Error) => {
         if (!cancelled) setStatus({ type: 'error', message: err.message ?? String(err) })
@@ -55,11 +60,42 @@ export function DiffView({ target }: { target: PrTarget }) {
   if (status.files.length === 0) {
     return <CenteredNote>This pull request has no file changes.</CenteredNote>
   }
-  return <DiffLoaded files={status.files} />
+  return <DiffLoaded target={target} files={status.files} inline={status.inline} />
 }
 
-function DiffLoaded({ files }: { files: DiffFile[] }) {
+function DiffLoaded({
+  target,
+  files,
+  inline
+}: {
+  target: PrTarget
+  files: DiffFile[]
+  inline: InlineComment[]
+}) {
   const codeViewRef = useRef<CodeViewHandle<AnnotationMeta>>(null)
+
+  const reviewTarget: ReviewTarget = useMemo(
+    () => ({ owner: target.owner, repo: target.repo, number: target.number }),
+    [target.owner, target.repo, target.number]
+  )
+
+  // A freshly-started Review freezes the diff it was drafted against (the
+  // Diff Snapshot, ADR 0001). PR patches carry no binary flag.
+  const buildSnapshot = useCallback(
+    (): DiffSnapshot => ({
+      files: files.map(f => ({ ...f, status: 'modified' as const, isBinary: false, oldPath: undefined }))
+    }),
+    [files]
+  )
+
+  const draft = useReviewDraft({
+    target: reviewTarget,
+    buildSnapshot,
+    defaultEvent: 'COMMENT',
+    onAfterCommit: () => codeViewRef.current?.clearSelectedLines()
+  })
+  const { pending, editing: editingComments } = draft
+  const { submitting, submit, discard } = useReviewSubmit(draft)
 
   const paths = useMemo(() => files.map(f => f.path), [files])
   const sortByDiffOrder = useDiffOrderSort(paths)
@@ -72,16 +108,34 @@ function DiffLoaded({ files }: { files: DiffFile[] }) {
   const selectedPaths = useFileTreeSelection(model)
   const selectedPath = selectedPaths[0] ?? paths[0]
 
-  // Read-only surface: no annotations, no draft, no review panel.
-  const annotationsByPath = useMemo(() => new Map<string, DiffLineAnnotation<AnnotationMeta>[]>(), [])
-  // PR files are all text patches from GitHub; none carry a binary flag.
-  const codeFiles = useMemo(() => files.map(f => ({ ...f, isBinary: false })), [files])
-  const shell = useReviewSurfaceShell({ files: codeFiles, annotationsByPath, model, selectedPath, codeViewRef })
+  // Existing GitHub threads render read-only; pending comments and
+  // in-flight drafts render as their own annotations at the right line.
+  const annotationsByPath = useMemo(
+    () =>
+      buildAnnotationMap({
+        existing: inline,
+        pending: pending?.lineComments,
+        drafts: draftComments(editingComments)
+      }),
+    [inline, pending, editingComments]
+  )
 
-  // One ordered scroll target per hunk. The shell has already parsed each
-  // patch into `fileDiff` for the CodeView, so we reuse those hunks rather
-  // than re-parsing. The cursor walks this list; selecting a file re-seats
-  // it at that file's first hunk.
+  const codeFiles = useMemo(() => files.map(f => ({ ...f, isBinary: false })), [files])
+  const shell = useReviewSurfaceShell({
+    files: codeFiles,
+    annotationsByPath,
+    model,
+    selectedPath,
+    codeViewRef,
+    draft
+  })
+  const { startReview, startDraft, reviewPanelOpen } = shell
+
+  const renderAnnotation = useMemo(
+    () => makeReviewAnnotationRenderer({ draft, startDraft }),
+    [draft, startDraft]
+  )
+
   const hunkTargets = useMemo(
     () => buildHunkTargets(shell.codeViewItems.map(i => ({ path: i.id, hunks: i.fileDiff.hunks }))),
     [shell.codeViewItems]
@@ -106,8 +160,6 @@ function DiffLoaded({ files }: { files: DiffFile[] }) {
       if (next < 0) return
       hunkCursor.current = next
       const t = hunkTargets[next]
-      // Scroll to the hunk directly (not via file selection, which would
-      // scroll to the file's start and fight this target).
       codeViewRef.current?.scrollTo({
         type: 'line',
         id: t.path,
@@ -124,21 +176,80 @@ function DiffLoaded({ files }: { files: DiffFile[] }) {
   useKeyboardShortcut({ key: '[', handler: () => stepFile(-1) })
   useKeyboardShortcut({ key: 'j', handler: () => stepHunk(1) })
   useKeyboardShortcut({ key: 'k', handler: () => stepHunk(-1) })
+  useKeyboardShortcut(pending ? null : { key: 'r', handler: startReview })
+  useKeyboardShortcut(
+    pending ? { key: 'Enter', meta: true, allowInForm: true, handler: submit } : null
+  )
+
+  const showPanel = !!pending && reviewPanelOpen
 
   return (
-    <ReviewSurface
-      panesId="diff-panes"
-      model={model}
-      fileTreeOpen={shell.fileTreeOpen}
-      treeSize="18%"
-      diffSize="82%"
-      panelSize="0%"
-      codeViewRef={codeViewRef}
-      diffSectionRef={shell.diffSectionRef}
-      items={shell.codeViewItems}
-      renderHeaderPrefix={shell.renderHeaderPrefix}
-      emptyState="No diff to display"
-    />
+    <div className="flex-1 min-h-0 flex flex-col">
+      <ReviewToolbar pending={pending} onStart={startReview} />
+      <ReviewSurface
+        panesId="diff-panes"
+        model={model}
+        fileTreeOpen={shell.fileTreeOpen}
+        treeSize="18%"
+        diffSize={showPanel ? '60%' : '82%'}
+        panelSize={showPanel ? '22%' : '0%'}
+        codeViewRef={codeViewRef}
+        diffSectionRef={shell.diffSectionRef}
+        items={shell.codeViewItems}
+        renderHeaderPrefix={shell.renderHeaderPrefix}
+        enableAuthoring
+        onGutterDraft={startDraft}
+        emptyState="No diff to display"
+        renderAnnotation={renderAnnotation}
+        reviewPanel={
+          showPanel ? (
+            <ReviewPanel
+              pending={pending}
+              submitting={submitting}
+              onSummary={draft.setSummary}
+              onEvent={draft.setEvent}
+              onSubmit={submit}
+              onDiscard={discard}
+            />
+          ) : null
+        }
+      />
+    </div>
+  )
+}
+
+/**
+ * Slim bar above the diff. Before a Review is started it offers the
+ * entry point ("Start review"); once one is pending it reports progress
+ * — the summary / event / submit controls live in the review panel.
+ */
+function ReviewToolbar({
+  pending,
+  onStart
+}: {
+  pending: PendingReview | null
+  onStart: () => void
+}) {
+  const count = pending?.lineComments.length ?? 0
+  return (
+    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-hairline bg-surface text-[12px]">
+      {pending ? (
+        <span className="text-muted">
+          Review in progress · {count} comment{count === 1 ? '' : 's'}
+        </span>
+      ) : (
+        <>
+          <span className="flex-1 text-subtle">
+            Draft comments from the + in the gutter, then submit one batched review.
+          </span>
+          <Tooltip content="Start a pending review" shortcut="r">
+            <Button variant="primary" size="sm" onClick={onStart}>
+              Start review
+            </Button>
+          </Tooltip>
+        </>
+      )}
+    </div>
   )
 }
 

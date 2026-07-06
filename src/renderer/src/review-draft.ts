@@ -9,10 +9,10 @@ import type {
 /**
  * The Pending Review drafting machine.
  *
- * This is the single home for the rules that were previously copy-pasted
- * across the PR Review and Local Mode views: what a Pending Review is,
- * how Line Comments are buffered while being edited, when a fresh draft
- * promotes itself into a Pending Review, and what gets persisted when.
+ * This is the single home for the rules every authoring surface shares:
+ * what a Pending Review is, how Line Comments are buffered while being
+ * edited, when a fresh draft promotes itself into a Pending Review, and
+ * what gets persisted when.
  *
  * The reducer is pure and total — every impure input (timestamps, ids,
  * the snapshot to freeze) is supplied by the caller in the action, so

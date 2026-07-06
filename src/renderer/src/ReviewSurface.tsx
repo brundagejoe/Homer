@@ -126,9 +126,9 @@ export interface ReviewSurfaceShell {
  * collapse state, the Pierre CodeView item list, scroll-to-selected-file,
  * the file-tree / panel layout toggles, and their keyboard shortcuts.
  *
- * Its only live consumer is the read-only Diff view; the drafting hooks
- * (`draft`, `startReview` / `startDraft`) are kept for when Line Comment
- * authoring lands. With no `draft` supplied they are no-ops.
+ * The Diff tab drives it with a live `draft` (Line Comment authoring is
+ * on); a read-only surface can omit `draft`, in which case the drafting
+ * hooks (`startReview` / `startDraft`) become no-ops.
  */
 export function useReviewSurfaceShell(args: {
   files: CodeFile[]
@@ -138,9 +138,8 @@ export function useReviewSurfaceShell(args: {
   codeViewRef: RefObject<CodeViewHandle<AnnotationMeta> | null>
   /**
    * The Pending Review drafting machine. Optional: a read-only surface
-   * (e.g. the Diff view before review authoring lands) reuses all the
-   * shell's tree/collapse/scroll mechanics but has no draft — with none
-   * supplied, review-authoring actions become no-ops.
+   * reuses all the shell's tree/collapse/scroll mechanics but has no
+   * draft — with none supplied, review-authoring actions become no-ops.
    */
   draft?: UseReviewDraft
 }): ReviewSurfaceShell {
@@ -263,11 +262,10 @@ export function useReviewSurfaceShell(args: {
 }
 
 /**
- * The tree + diff + review-panel layout. Its only live consumer is the
- * read-only Diff view; the authoring pieces (gutter draft entry, line
- * selection, annotation rendering, and the review panel) are all gated
- * behind the single `enableAuthoring` seam for when Line Comment
- * authoring lands.
+ * The tree + diff + review-panel layout. The authoring pieces (gutter
+ * draft entry, line selection, annotation rendering, and the review
+ * panel) are all gated behind the single `enableAuthoring` seam: the Diff
+ * tab turns it on, a read-only surface leaves it off.
  */
 export function ReviewSurface({
   panesId,

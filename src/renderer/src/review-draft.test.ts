@@ -7,11 +7,7 @@ import {
   type DraftState
 } from './review-draft'
 
-const target: ReviewTarget = {
-  kind: 'local',
-  repoPath: '/repo',
-  source: { type: 'working-tree-vs-head' }
-}
+const target: ReviewTarget = { owner: 'o', repo: 'r', number: 7 }
 
 const snapshot: DiffSnapshot = {
   files: [{ path: 'a.ts', status: 'modified', isBinary: false, patch: '@@' }]

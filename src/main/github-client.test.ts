@@ -2,34 +2,27 @@ import { describe, test, expect } from 'bun:test'
 import {
   GitHubClient,
   OctokitLike,
-  SearchResponseItem,
   PullResponseData,
   ReviewCommentData,
   IssueCommentData,
   CreateReviewParams,
+  CreateReplyParams,
   CreateReviewResponse
 } from './github-client'
 
 interface MockOptions {
-  search?: Record<string, SearchResponseItem[]>
   pullData?: PullResponseData
   pullDiff?: string
   reviewComments?: ReviewCommentData[]
   issueComments?: IssueCommentData[]
   createReviewResponse?: CreateReviewResponse
   capturedReviews?: CreateReviewParams[]
+  capturedReplies?: CreateReplyParams[]
 }
 
 function mockOctokit(opts: MockOptions = {}): { octokit: OctokitLike; calls: string[] } {
   const calls: string[] = []
   const octokit: OctokitLike = {
-    search: {
-      async issuesAndPullRequests({ q }: { q: string }) {
-        calls.push(`search ${q}`)
-        const items = opts.search?.[q] ?? []
-        return { data: { total_count: items.length, items, incomplete_results: false } }
-      }
-    },
     pulls: {
       async get(params) {
         calls.push(`pulls.get ${params.owner}/${params.repo}#${params.pull_number} ${params.mediaType?.format ?? 'json'}`)
@@ -52,6 +45,11 @@ function mockOctokit(opts: MockOptions = {}): { octokit: OctokitLike; calls: str
             html_url: 'https://github.com/o/r/pull/7#pullrequestreview-1'
           }
         }
+      },
+      async createReplyForReviewComment(params) {
+        calls.push(`pulls.createReplyForReviewComment ${params.owner}/${params.repo}#${params.pull_number} <-${params.comment_id}`)
+        opts.capturedReplies?.push(params)
+        return { data: { id: 555 } }
       }
     },
     issues: {
@@ -63,94 +61,6 @@ function mockOctokit(opts: MockOptions = {}): { octokit: OctokitLike; calls: str
   }
   return { octokit, calls }
 }
-
-const samplePr = (overrides: Partial<SearchResponseItem> = {}): SearchResponseItem => ({
-  id: 1,
-  number: 42,
-  title: 'My PR',
-  html_url: 'https://github.com/o/r/pull/42',
-  updated_at: '2026-05-01T12:00:00Z',
-  comments: 3,
-  draft: false,
-  pull_request: { merged_at: null },
-  user: { login: 'joe' },
-  repository_url: 'https://api.github.com/repos/o/r',
-  state: 'open',
-  ...overrides
-})
-
-describe('GitHubClient.listInvolvingPRs', () => {
-  test("uses author:@me for the 'mine' query", async () => {
-    const { octokit, calls } = mockOctokit({})
-    const client = new GitHubClient(octokit)
-    await client.listInvolvingPRs()
-    expect(calls.some(q => q.includes('author:@me') && q.includes('is:open') && q.includes('is:pr'))).toBe(true)
-  })
-
-  test('uses review-requested:@me for the review-requested query', async () => {
-    const { octokit, calls } = mockOctokit({})
-    const client = new GitHubClient(octokit)
-    await client.listInvolvingPRs()
-    expect(calls.some(q => q.includes('review-requested:@me') && q.includes('is:open'))).toBe(true)
-  })
-
-  test('recently-merged query uses is:merged and a date 7 days ago', async () => {
-    const { octokit, calls } = mockOctokit({})
-    const client = new GitHubClient(octokit)
-    await client.listInvolvingPRs(new Date('2026-05-21T12:00:00Z'))
-    const mergedQuery = calls.find(q => q.startsWith('search ') && q.includes('is:merged'))
-    expect(mergedQuery).toBeDefined()
-    expect(mergedQuery!).toContain('merged:>=2026-05-14')
-    expect(mergedQuery!).toContain('author:@me')
-  })
-
-  test('normalizes a search item into a PullRequestSummary', async () => {
-    const { octokit } = mockOctokit({
-      search: {
-        'is:open is:pr author:@me archived:false': [
-          samplePr({ id: 99, number: 7, title: 'Refactor', repository_url: 'https://api.github.com/repos/acme/widgets', user: { login: 'joe' } })
-        ]
-      }
-    })
-    const client = new GitHubClient(octokit)
-    const result = await client.listInvolvingPRs()
-    expect(result.mine).toEqual([
-      {
-        id: 99,
-        number: 7,
-        title: 'Refactor',
-        repo: 'acme/widgets',
-        author: 'joe',
-        state: 'open',
-        url: 'https://github.com/o/r/pull/42',
-        updatedAt: '2026-05-01T12:00:00Z',
-        commentCount: 3
-      }
-    ])
-  })
-
-  test('marks a draft PR with state=draft', async () => {
-    const { octokit } = mockOctokit({
-      search: { 'is:open is:pr author:@me archived:false': [samplePr({ draft: true })] }
-    })
-    const client = new GitHubClient(octokit)
-    const result = await client.listInvolvingPRs()
-    expect(result.mine[0].state).toBe('draft')
-  })
-
-  test('marks a merged PR with state=merged', async () => {
-    const { octokit } = mockOctokit({
-      search: {
-        'is:pr is:merged author:@me archived:false merged:>=2026-05-14': [
-          samplePr({ pull_request: { merged_at: '2026-05-15T00:00:00Z' } })
-        ]
-      }
-    })
-    const client = new GitHubClient(octokit)
-    const result = await client.listInvolvingPRs(new Date('2026-05-21T12:00:00Z'))
-    expect(result.recentlyMerged[0].state).toBe('merged')
-  })
-})
 
 const samplePullData = (overrides: Partial<PullResponseData> = {}): PullResponseData => ({
   number: 7,
@@ -282,7 +192,8 @@ describe('GitHubClient.submitReview', () => {
     const response = await client.submitReview('o', 'r', 7, {
       body: 'ship it',
       event: 'APPROVE',
-      comments: [{ path: 'a.ts', line: 5, side: 'RIGHT', body: 'nit' }]
+      comments: [{ path: 'a.ts', line: 5, side: 'RIGHT', body: 'nit' }],
+      replies: []
     })
     expect(calls).toContain('pulls.createReview o/r#7 APPROVE')
     expect(capturedReviews[0]).toMatchObject({
@@ -294,6 +205,59 @@ describe('GitHubClient.submitReview', () => {
       comments: [{ path: 'a.ts', line: 5, side: 'RIGHT', body: 'nit' }]
     })
     expect(response.state).toBe('submitted')
+  })
+
+  test('does not forward replies into the createReview comments array', async () => {
+    const capturedReviews: CreateReviewParams[] = []
+    const { octokit } = mockOctokit({ capturedReviews })
+    const client = new GitHubClient(octokit)
+    await client.submitReview('o', 'r', 7, {
+      body: '',
+      event: 'COMMENT',
+      comments: [{ path: 'a.ts', line: 5, side: 'RIGHT', body: 'nit' }],
+      replies: [{ inReplyTo: 999, body: 'thanks' }]
+    })
+    // The batched createReview must carry only new comments; replies would
+    // 422 the whole request there.
+    expect(capturedReviews[0].comments).toEqual([{ path: 'a.ts', line: 5, side: 'RIGHT', body: 'nit' }])
+  })
+
+  test('posts each reply against its parent comment after the review is created', async () => {
+    const capturedReplies: CreateReplyParams[] = []
+    const { octokit, calls } = mockOctokit({ capturedReplies })
+    const client = new GitHubClient(octokit)
+    await client.submitReview('o', 'r', 7, {
+      body: '',
+      event: 'COMMENT',
+      comments: [],
+      replies: [
+        { inReplyTo: 111, body: 'first' },
+        { inReplyTo: 222, body: 'second' }
+      ]
+    })
+    expect(capturedReplies).toEqual([
+      { owner: 'o', repo: 'r', pull_number: 7, comment_id: 111, body: 'first' },
+      { owner: 'o', repo: 'r', pull_number: 7, comment_id: 222, body: 'second' }
+    ])
+    // The review is created before the replies are posted.
+    const reviewIdx = calls.findIndex(c => c.startsWith('pulls.createReview'))
+    const firstReplyIdx = calls.findIndex(c => c.startsWith('pulls.createReplyForReviewComment'))
+    expect(reviewIdx).toBeGreaterThanOrEqual(0)
+    expect(firstReplyIdx).toBeGreaterThan(reviewIdx)
+  })
+
+  test('submits with no reply calls when there are no replies', async () => {
+    const capturedReplies: CreateReplyParams[] = []
+    const { octokit, calls } = mockOctokit({ capturedReplies })
+    const client = new GitHubClient(octokit)
+    await client.submitReview('o', 'r', 7, {
+      body: 'lgtm',
+      event: 'APPROVE',
+      comments: [],
+      replies: []
+    })
+    expect(capturedReplies).toEqual([])
+    expect(calls.some(c => c.startsWith('pulls.createReplyForReviewComment'))).toBe(false)
   })
 })
 

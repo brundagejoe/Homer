@@ -33,21 +33,8 @@ export interface FileWithPatch {
   patch: string
 }
 
-export interface LocalDiffResult {
-  files: FileWithPatch[]
-}
-
-export type DiffSourceSpec =
-  | { type: 'working-tree-vs-head' }
-  | { type: 'staged-vs-head' }
-  | { type: 'working-tree-vs-staged' }
-  | { type: 'branch-vs-base'; head: string; base: string }
-  | { type: 'commit-range'; from: string; to: string }
-  | { type: 'single-commit'; sha: string }
-
-export type ReviewTarget =
-  | { kind: 'local'; repoPath: string; source: DiffSourceSpec }
-  | { kind: 'pr'; owner: string; repo: string; number: number }
+/** The Destination is always the GitHub PR, so a Review is keyed to (repo, PR). */
+export type ReviewTarget = { owner: string; repo: string; number: number }
 
 export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
 
@@ -85,24 +72,6 @@ export type AuthStatus =
   | { kind: 'not-authenticated' }
   | { kind: 'gh-not-installed' }
   | { kind: 'error'; message: string }
-
-export interface PullRequestSummary {
-  id: number
-  number: number
-  title: string
-  repo: string
-  author: string
-  state: 'open' | 'draft' | 'merged' | 'closed'
-  url: string
-  updatedAt: string
-  commentCount: number
-}
-
-export interface InboxResult {
-  mine: PullRequestSummary[]
-  reviewRequested: PullRequestSummary[]
-  recentlyMerged: PullRequestSummary[]
-}
 
 export interface PullRequestDetails {
   owner: string
@@ -164,18 +133,13 @@ const api = {
     ipcRenderer.on('app:navigate', listener)
     return () => ipcRenderer.removeListener('app:navigate', listener)
   },
-  getLocalDiff: (repoPath: string, source?: DiffSourceSpec): Promise<LocalDiffResult> =>
-    ipcRenderer.invoke('git:local-diff', { repoPath, source }),
   reviewGet: (target: ReviewTarget): Promise<PendingReview | null> =>
     ipcRenderer.invoke('review:get', target),
   reviewUpsert: (review: PendingReview): Promise<void> => ipcRenderer.invoke('review:upsert', review),
   reviewDelete: (target: ReviewTarget): Promise<void> => ipcRenderer.invoke('review:delete', target),
-  reviewSubmitToAgent: (review: PendingReview): Promise<void> =>
-    ipcRenderer.invoke('review:submit-to-agent', review),
   reviewSubmitToGithub: (review: PendingReview): Promise<{ url: string }> =>
     ipcRenderer.invoke('review:submit-to-github', review),
   ghAuthStatus: (): Promise<AuthStatus> => ipcRenderer.invoke('gh:auth-status'),
-  githubListPRs: (): Promise<InboxResult> => ipcRenderer.invoke('github:list-prs'),
   githubGetPR: (t: PrTarget): Promise<PullRequestDetails> => ipcRenderer.invoke('github:get-pr', t),
   githubGetPRDiff: (t: PrTarget): Promise<string> => ipcRenderer.invoke('github:get-pr-diff', t),
   githubGetPRInlineComments: (t: PrTarget): Promise<InlineComment[]> =>

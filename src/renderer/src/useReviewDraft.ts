@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from '@/components/ui/toast'
+import { confirm } from '@/components/ui/alert-dialog'
 import type { DiffSnapshot, PendingReview, ReviewEvent, ReviewTarget } from '../../preload'
 import {
   type AnchorSpec,
@@ -30,16 +32,17 @@ export interface UseReviewDraft {
 }
 
 /**
- * Owns the Pending Review lifecycle for one Diff Source. Holds the pure
- * draft state (see review-draft.ts), hydrates it from the store, and
- * runs the persistence effect the reducer emits — so the two review
- * views share one drafting machine instead of each carrying a copy.
+ * Owns the Pending Review lifecycle for one PR. Holds the pure draft
+ * state (see review-draft.ts), hydrates it from the store, and runs the
+ * persistence effect the reducer emits — so every authoring surface (the
+ * Diff tab today, the Guide tab in slice #29) shares one drafting machine
+ * instead of each carrying a copy.
  *
- * `buildSnapshot` decides what a freshly-started review freezes (the PR
- * view normalizes its files; Local Mode snapshots the live working
- * tree). `defaultEvent` seeds the review's GitHub event when the
- * destination supports one. `onAfterCommit` lets the view clear its
- * gutter selection once a comment is committed or cancelled.
+ * `buildSnapshot` decides what a freshly-started review freezes as its
+ * Diff Snapshot (ADR 0001) — the Diff tab normalizes its `base...head`
+ * files. `defaultEvent` seeds the review's GitHub submit event.
+ * `onAfterCommit` lets the view clear its gutter selection once a comment
+ * is committed or cancelled.
  */
 export function useReviewDraft(opts: {
   target: ReviewTarget
@@ -70,7 +73,7 @@ export function useReviewDraft(opts: {
   }, [])
 
   // Reset and re-hydrate whenever the target changes. The caller passes
-  // a memoized target so this fires once per Diff Source.
+  // a memoized target so this fires once per PR.
   useEffect(() => {
     const fresh = initialDraftState(target)
     stateRef.current = fresh
@@ -112,4 +115,58 @@ export function useReviewDraft(opts: {
     discard: () => dispatch({ type: 'discard' }),
     markSubmitted: () => dispatch({ type: 'submitted' })
   }
+}
+
+export interface UseReviewSubmit {
+  submitting: boolean
+  /** Post the Pending Review to the GitHub PR, then clear local state. */
+  submit: () => Promise<void>
+  /** Confirm, then discard the Pending Review. */
+  discard: () => Promise<void>
+}
+
+/**
+ * Submit / discard orchestration for a Pending Review. This is a property
+ * of the Review itself (post to GitHub → markSubmitted → toast; or confirm
+ * → discard), not of any one authoring surface, so every view that hosts a
+ * draft — the Diff tab today, the Guide tab (slice #29) next — drives it
+ * the same way instead of re-implementing the toast/retry/confirm dance.
+ */
+export function useReviewSubmit(draft: UseReviewDraft): UseReviewSubmit {
+  const { pending } = draft
+  const [submitting, setSubmitting] = useState(false)
+
+  const submit = useCallback(async () => {
+    if (!pending) return
+    setSubmitting(true)
+    try {
+      const { url } = await window.api.reviewSubmitToGithub(pending)
+      draft.markSubmitted()
+      toast.success('Review submitted', {
+        actionLabel: 'Open on GitHub',
+        onAction: () => window.open(url, '_blank', 'noreferrer')
+      })
+    } catch (err) {
+      toast.error('Submit failed', {
+        description: (err as Error).message,
+        actionLabel: 'Retry',
+        onAction: submit
+      })
+    } finally {
+      setSubmitting(false)
+    }
+  }, [pending, draft])
+
+  const discard = useCallback(async () => {
+    if (!pending) return
+    const ok = await confirm({
+      title: 'Discard pending review?',
+      description: 'All drafted comments and the summary will be lost.',
+      confirmLabel: 'Discard',
+      destructive: true
+    })
+    if (ok) draft.discard()
+  }, [pending, draft])
+
+  return { submitting, submit, discard }
 }
