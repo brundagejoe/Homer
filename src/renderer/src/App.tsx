@@ -180,7 +180,7 @@ function Window({ target }: { target: PrTarget }) {
       </TitleBar>
       {tab === 'activity' && <ActivityView status={status} />}
       {tab === 'guide' && <GuideView guide={guide} onRetry={guide.retry} />}
-      {tab === 'diff' && <DiffView target={target} />}
+      {tab === 'diff' && <DiffView target={target} coverage={guide.coverage} />}
     </main>
   )
 }

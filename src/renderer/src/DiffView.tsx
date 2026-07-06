@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CodeViewHandle } from '@pierre/diffs/react'
+import { processFile } from '@pierre/diffs'
 import { useFileTree, useFileTreeSelection } from '@pierre/trees/react'
 import { splitPatchByFile } from '../../shared/split-patch'
+import { findUnnarratedHunks, type DiffHunk } from '../../shared/coverage-mapper'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { ReviewSurface, useReviewSurfaceShell } from './ReviewSurface'
 import { useReviewDraft, useReviewSubmit } from './useReviewDraft'
-import { buildAnnotationMap, type AnnotationMeta } from './diff-annotations'
+import { buildAnnotationMap, type AnnotationMeta, type UnnarratedAnchor } from './diff-annotations'
 import { draftComments, makeReviewAnnotationRenderer, ReviewPanel } from './review-comments'
 import { buildHunkTargets, clampStep, firstHunkIndexForPath } from './diff-navigation'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
+import { toast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
+import type { CoverageMap } from '../../shared/guide-schema'
 import type { DiffSnapshot, InlineComment, PendingReview, PrTarget, ReviewTarget } from '../../preload'
 
 type DiffFile = { path: string; patch: string }
@@ -33,7 +37,7 @@ type Status =
  * panel come from the shared `review-comments` kit; this view is the diff-
  * specific wiring (fetch, file tree, hunk/file keyboard nav).
  */
-export function DiffView({ target }: { target: PrTarget }) {
+export function DiffView({ target, coverage }: { target: PrTarget; coverage?: CoverageMap }) {
   const [status, setStatus] = useState<Status>({ type: 'loading' })
 
   useEffect(() => {
@@ -60,17 +64,19 @@ export function DiffView({ target }: { target: PrTarget }) {
   if (status.files.length === 0) {
     return <CenteredNote>This pull request has no file changes.</CenteredNote>
   }
-  return <DiffLoaded target={target} files={status.files} inline={status.inline} />
+  return <DiffLoaded target={target} files={status.files} inline={status.inline} coverage={coverage} />
 }
 
 function DiffLoaded({
   target,
   files,
-  inline
+  inline,
+  coverage
 }: {
   target: PrTarget
   files: DiffFile[]
   inline: InlineComment[]
+  coverage?: CoverageMap
 }) {
   const codeViewRef = useRef<CodeViewHandle<AnnotationMeta>>(null)
 
@@ -97,6 +103,21 @@ function DiffLoaded({
   const { pending, editing: editingComments } = draft
   const { submitting, submit, discard } = useReviewSubmit(draft)
 
+  // The Review cannot be finalized until the reviewer completes the Diff
+  // pass — the required completeness leg (advancing past the last Guide
+  // Section does not finalize). We gate submit on an explicit, honest
+  // acknowledgement that the diff (with its un-narrated flags) was reviewed.
+  const [diffPassDone, setDiffPassDone] = useState(false)
+  const gatedSubmit = useCallback(() => {
+    if (!diffPassDone) {
+      toast.error('Complete the Diff pass first', {
+        description: 'Confirm you have reviewed the diff before submitting.'
+      })
+      return
+    }
+    submit()
+  }, [diffPassDone, submit])
+
   const paths = useMemo(() => files.map(f => f.path), [files])
   const sortByDiffOrder = useDiffOrderSort(paths)
   const { model } = useFileTree({
@@ -108,16 +129,23 @@ function DiffLoaded({
   const selectedPaths = useFileTreeSelection(model)
   const selectedPath = selectedPaths[0] ?? paths[0]
 
+  // Reconcile the Guide's Coverage Map against the real diff hunks: every
+  // changed hunk the Guide didn't narrate is flagged (CoverageMapper). No
+  // coverage yet (Guide unfinalized or failed) → flag all, so nothing hides.
+  const unnarrated = useMemo(() => unnarratedAnchors(files, coverage ?? null), [files, coverage])
+
   // Existing GitHub threads render read-only; pending comments and
-  // in-flight drafts render as their own annotations at the right line.
+  // in-flight drafts render as their own annotations at the right line;
+  // un-narrated flags mark the completeness backstop.
   const annotationsByPath = useMemo(
     () =>
       buildAnnotationMap({
         existing: inline,
         pending: pending?.lineComments,
-        drafts: draftComments(editingComments)
+        drafts: draftComments(editingComments),
+        unnarrated
       }),
-    [inline, pending, editingComments]
+    [inline, pending, editingComments, unnarrated]
   )
 
   const codeFiles = useMemo(() => files.map(f => ({ ...f, isBinary: false })), [files])
@@ -178,7 +206,7 @@ function DiffLoaded({
   useKeyboardShortcut({ key: 'k', handler: () => stepHunk(-1) })
   useKeyboardShortcut(pending ? null : { key: 'r', handler: startReview })
   useKeyboardShortcut(
-    pending ? { key: 'Enter', meta: true, allowInForm: true, handler: submit } : null
+    pending ? { key: 'Enter', meta: true, allowInForm: true, handler: gatedSubmit } : null
   )
 
   const showPanel = !!pending && reviewPanelOpen
@@ -206,9 +234,12 @@ function DiffLoaded({
             <ReviewPanel
               pending={pending}
               submitting={submitting}
+              diffPassDone={diffPassDone}
+              onDiffPassChange={setDiffPassDone}
+              unnarratedCount={unnarrated.length}
               onSummary={draft.setSummary}
               onEvent={draft.setEvent}
-              onSubmit={submit}
+              onSubmit={gatedSubmit}
               onDiscard={discard}
             />
           ) : null
@@ -276,6 +307,35 @@ function useDiffOrderSort(paths: readonly string[]) {
       return ai - bi
     }
   }, [paths])
+}
+
+/** A diff hunk enriched with where its un-narrated flag should anchor. */
+type CoverageHunk = DiffHunk & UnnarratedAnchor
+
+/**
+ * Parse each file's patch into hunks and return the anchors for those the
+ * Guide did not narrate. A hunk's changed-line span (new side, or old side
+ * for a pure deletion) is what CoverageMapper reconciles against the
+ * Coverage Map; the flag anchors on that same first changed line.
+ */
+function unnarratedAnchors(files: DiffFile[], coverage: CoverageMap | null): UnnarratedAnchor[] {
+  const hunks: CoverageHunk[] = []
+  for (const f of files) {
+    const fileDiff = processFile(f.patch)
+    if (!fileDiff) continue
+    for (const h of fileDiff.hunks) {
+      const hasAdds = h.additionLines > 0
+      const start = hasAdds ? h.additionStart : h.deletionStart
+      const count = hasAdds ? h.additionLines : h.deletionLines
+      hunks.push({
+        path: f.path,
+        side: hasAdds ? 'additions' : 'deletions',
+        lineNumber: start,
+        lineRange: { start, end: start + Math.max(count, 1) - 1 }
+      })
+    }
+  }
+  return findUnnarratedHunks(hunks, coverage)
 }
 
 function CenteredNote({ children, tone }: { children: React.ReactNode; tone?: 'danger' }) {

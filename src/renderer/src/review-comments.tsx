@@ -53,6 +53,9 @@ export function makeReviewAnnotationRenderer({
   const { pending, editing } = draft
   return ann => {
     const meta = ann.metadata!
+    if (meta.kind === 'unnarrated') {
+      return <UnnarratedFlag />
+    }
     if (meta.kind === 'existing') {
       const replyToId = meta.comment.id
       const hasReply =
@@ -97,6 +100,21 @@ export function makeReviewAnnotationRenderer({
       />
     )
   }
+}
+
+/**
+ * The completeness backstop marker: a changed hunk the Guide did not
+ * narrate. Deliberately distinct from a Line Comment (a warning-tinted
+ * inline banner, no author/actions) so the reviewer reads it as "the
+ * story skipped this — look here" rather than as feedback.
+ */
+export function UnnarratedFlag() {
+  return (
+    <div className="mx-2 my-1 flex items-center gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1 text-[11.5px] text-warning">
+      <span aria-hidden>⚑</span>
+      <span>Not narrated by the Guide — review this change.</span>
+    </div>
+  )
 }
 
 /**
@@ -256,6 +274,9 @@ export function PendingCommentCard({
 export function ReviewPanel({
   pending,
   submitting,
+  diffPassDone,
+  onDiffPassChange,
+  unnarratedCount,
   onSummary,
   onEvent,
   onSubmit,
@@ -263,6 +284,11 @@ export function ReviewPanel({
 }: {
   pending: PendingReview
   submitting: boolean
+  /** Whether the reviewer has confirmed the required Diff pass. */
+  diffPassDone: boolean
+  onDiffPassChange: (done: boolean) => void
+  /** Changed hunks the Guide did not narrate, flagged in the diff. */
+  unnarratedCount: number
   onSummary: (s: string) => void
   onEvent: (e: ReviewEvent) => void
   onSubmit: () => void
@@ -318,9 +344,40 @@ export function ReviewPanel({
         </Select>
       </label>
 
+      <label className="flex items-start gap-2 border-t border-hairline pt-2.5 text-[12px] cursor-pointer">
+        <input
+          type="checkbox"
+          checked={diffPassDone}
+          onChange={e => onDiffPassChange(e.target.checked)}
+          className="mt-0.5"
+        />
+        <span className="text-fg">
+          I&apos;ve completed the Diff pass
+          <span className="block text-[11px] text-muted">
+            {unnarratedCount > 0
+              ? `${unnarratedCount} change${unnarratedCount === 1 ? '' : 's'} the Guide didn't narrate ${
+                  unnarratedCount === 1 ? 'is' : 'are'
+                } flagged in the diff — required before submitting so nothing hides.`
+              : 'Required before submitting so nothing hides.'}
+          </span>
+        </span>
+      </label>
+
       <div className="flex gap-2">
-        <Tooltip content="Submit review to GitHub" shortcut="⌘⏎">
-          <Button variant="primary" onClick={onSubmit} disabled={submitting} className="flex-1">
+        <Tooltip
+          content={
+            diffPassDone
+              ? 'Submit review to GitHub'
+              : 'Complete the Diff pass to submit — confirm you have reviewed the diff'
+          }
+          shortcut="⌘⏎"
+        >
+          <Button
+            variant="primary"
+            onClick={onSubmit}
+            disabled={submitting || !diffPassDone}
+            className="flex-1"
+          >
             {submitting ? 'Submitting…' : 'Submit review'}
           </Button>
         </Tooltip>
