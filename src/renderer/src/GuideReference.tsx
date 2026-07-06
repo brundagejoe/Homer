@@ -1,10 +1,10 @@
-import { useMemo, useRef, type ReactNode } from 'react'
-import { CodeView, type CodeViewHandle } from '@pierre/diffs/react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { CodeView, FileDiff, type CodeViewHandle } from '@pierre/diffs/react'
 import { processFile } from '@pierre/diffs'
-import type { CodeViewItem } from '@pierre/diffs'
+import type { CodeViewItem, FileDiffOptions, SelectedLineRange } from '@pierre/diffs'
 import { Badge } from '@/components/ui/badge'
 import { isGuideAuthoringEnabled, type RenderableReference } from '../../shared/guide-view'
-import { buildAuthoringOptions, buildCodeViewItems, useClearSelectionWhenIdle } from './ReviewSurface'
+import { specFromRange } from './ReviewSurface'
 import { buildAnnotationMap, type AnnotationMeta } from './diff-annotations'
 import { draftComments, makeReviewAnnotationRenderer } from './review-comments'
 import type { UseReviewDraft } from './useReviewDraft'
@@ -12,17 +12,41 @@ import type { AnchorSpec } from './review-draft'
 
 /**
  * One Code Reference: a labeled panel rendering changed code as a diff and
- * unchanged context as a full file, both via Pierre. Kept in its own file to
- * isolate the Pierre coupling out of the choreography module: `ScrollStory` is
- * the sole consumer today, and its `code` Section renderer (and any future
- * Section kinds) render a single reference through this layout-agnostic panel,
- * which knows nothing about scroll choreography.
+ * unchanged context as a full file. Kept in its own file to isolate the Pierre
+ * coupling out of the choreography module: `ScrollStory` is the sole consumer
+ * today, and its `code` Section renderer (and any future Section kinds) render
+ * a single reference through this layout-agnostic panel, which knows nothing
+ * about scroll choreography.
  *
  * `ReferencePanel` is the read-only view; `GuideReferencePanel` adds the
  * changed-lines-only Line Comment authoring the Guide tab wires in (slice #29)
  * by reusing the shared review kit — no new comment UI lives here.
+ *
+ * Rendering splits by kind so the whole Guide page scrolls as one:
+ *   - DIFF references are small (a hunk or two) and render with Pierre's
+ *     non-virtualized `FileDiff` at their NATURAL FULL HEIGHT — no inner
+ *     scroll box — so the outer `ScrollStory` page scroll handles everything.
+ *   - FULL/context references are WHOLE FILES and can be arbitrarily large, so
+ *     they stay on the virtualized `CodeView` inside a bounded scroll box; a
+ *     huge file rendered full-height would blow up the page.
  */
 const CODE_VIEW_CLASS = 'max-h-[460px] overflow-auto'
+
+/**
+ * The Guide column is narrow, so its diff panels render in Pierre's INLINE
+ * (unified, single-column) view — split's old|new columns clip code off the
+ * right with no usable scroll here. The Diff tab keeps split (it has full
+ * width); this inline choice is Guide-only. Long lines still scroll
+ * horizontally within the panel via Pierre's default `overflow: 'scroll'`.
+ */
+const GUIDE_DIFF_OPTIONS: FileDiffOptions<undefined> = { diffStyle: 'unified' }
+
+/**
+ * Lines of context to keep on each side of a full-file reference's `lineRange`
+ * when scrolling it into view, so the target span sits with a little breathing
+ * room rather than flush against the panel's top edge.
+ */
+const FULL_REF_SCROLL_PADDING = 3
 
 /** Chrome shared by the read-only and authoring reference panels. */
 function PanelShell({ reference, children }: { reference: RenderableReference; children: ReactNode }) {
@@ -51,25 +75,67 @@ function CouldNotRender({ path }: { path: string }) {
 }
 
 export function ReferencePanel({ reference }: { reference: RenderableReference }) {
-  const item = useMemo<CodeViewItem | null>(() => {
-    if (reference.renderMode === 'diff') {
-      const fileDiff = processFile(reference.content)
-      return fileDiff ? { id: reference.path, type: 'diff', fileDiff } : null
-    }
-    return {
+  return reference.renderMode === 'diff' ? (
+    <ReadonlyDiffReference reference={reference} />
+  ) : (
+    <FullReference reference={reference} />
+  )
+}
+
+/**
+ * A changed (diff) reference, read-only. Rendered with the non-virtualized
+ * `FileDiff` so the diff lays out at its natural height with no inner scroll —
+ * the panel body is not height-capped; the outer page scroll takes over. The
+ * `PanelShell`'s `overflow-hidden` only rounds the corners: the div has no
+ * fixed height, so it grows to fit the full diff rather than clipping it.
+ */
+function ReadonlyDiffReference({ reference }: { reference: RenderableReference }) {
+  const fileDiff = useMemo(() => processFile(reference.content), [reference.content])
+  return (
+    <PanelShell reference={reference}>
+      {fileDiff ? (
+        <FileDiff fileDiff={fileDiff} options={GUIDE_DIFF_OPTIONS} />
+      ) : (
+        <CouldNotRender path={reference.path} />
+      )}
+    </PanelShell>
+  )
+}
+
+/**
+ * A context (full-file) reference. Full-file references carry the WHOLE file
+ * text so the real line numbers survive; they can be arbitrarily large, so
+ * they stay on the virtualized `CodeView` inside a bounded scroll box. We
+ * window it to the referenced span by scrolling the target into view on mount
+ * (Pierre's `type:'file'` item has no line-offset).
+ */
+function FullReference({ reference }: { reference: RenderableReference }) {
+  const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
+  const item = useMemo<CodeViewItem>(
+    () => ({
       id: reference.path,
       type: 'file',
       file: { name: reference.path, contents: reference.content }
-    }
+    }),
+    [reference]
+  )
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      codeViewRef.current?.scrollTo({
+        type: 'line',
+        id: reference.path,
+        lineNumber: Math.max(reference.lineRange.start - FULL_REF_SCROLL_PADDING, 1),
+        align: 'start',
+        behavior: 'instant'
+      })
+    })
+    return () => cancelAnimationFrame(raf)
   }, [reference])
 
   return (
     <PanelShell reference={reference}>
-      {item ? (
-        <CodeView className={CODE_VIEW_CLASS} items={[item]} />
-      ) : (
-        <CouldNotRender path={reference.path} />
-      )}
+      <CodeView ref={codeViewRef} className={CODE_VIEW_CLASS} items={[item]} />
     </PanelShell>
   )
 }
@@ -108,38 +174,59 @@ function AuthoringDiffReference({
   draft: UseReviewDraft
   startDraft: (spec: { path: string; anchor: AnchorSpec; inReplyToId?: number }) => void
 }) {
-  const codeViewRef = useRef<CodeViewHandle<AnnotationMeta>>(null)
   const { pending, editing } = draft
+
+  const fileDiff = useMemo(() => processFile(reference.content), [reference.content])
 
   // Only the in-progress Review's comments render here (pending + in-flight
   // drafts); the annotations are naturally scoped to this reference's hunk
-  // because Pierre only renders those whose line exists in the item.
-  const annotationsByPath = useMemo(
-    () => buildAnnotationMap({ pending: pending?.lineComments, drafts: draftComments(editing) }),
-    [pending, editing]
-  )
-  const items = useMemo(
+  // because Pierre only renders those whose line exists in the diff.
+  const lineAnnotations = useMemo(
     () =>
-      buildCodeViewItems<AnnotationMeta>(
-        [{ path: reference.path, patch: reference.content, isBinary: false }],
-        p => annotationsByPath.get(p)
+      buildAnnotationMap({ pending: pending?.lineComments, drafts: draftComments(editing) }).get(
+        reference.path
       ),
-    [reference.path, reference.content, annotationsByPath]
+    [pending, editing, reference.path]
   )
   const renderAnnotation = useMemo(
     () => makeReviewAnnotationRenderer({ draft, startDraft }),
     [draft, startDraft]
   )
-  useClearSelectionWhenIdle(codeViewRef, editing.size)
+
+  // FileDiff exposes no imperative handle (unlike CodeView's
+  // `clearSelectedLines`), so we drive the drag-selection as a CONTROLLED
+  // value: `onLineSelectionChange` paints it during the gutter drag, and we
+  // clear it to null once no draft editor is open (the editing buffer emptied
+  // after a commit or cancel) so the blue gutter selection doesn't linger.
+  // Keyed on the editing count so it fires on the 1→0 edge, matching the Diff
+  // tab's `useClearSelectionWhenIdle`.
+  const [selectedLines, setSelectedLines] = useState<SelectedLineRange | null>(null)
+  useEffect(() => {
+    if (editing.size === 0) setSelectedLines(null)
+  }, [editing.size])
+
+  const options = useMemo<FileDiffOptions<AnnotationMeta>>(
+    () => ({
+      diffStyle: 'unified',
+      enableGutterUtility: true,
+      // Show the highlighted range while the user drags from the gutter +;
+      // without it the drag-select works data-wise but gives no visual cue.
+      enableLineSelection: true,
+      onGutterUtilityClick: range =>
+        startDraft({ path: reference.path, anchor: specFromRange(range) }),
+      onLineSelectionChange: setSelectedLines
+    }),
+    [reference.path, startDraft]
+  )
 
   return (
     <PanelShell reference={reference}>
-      {items.length > 0 ? (
-        <CodeView<AnnotationMeta>
-          ref={codeViewRef}
-          className={CODE_VIEW_CLASS}
-          items={items}
-          options={buildAuthoringOptions(startDraft)}
+      {fileDiff ? (
+        <FileDiff<AnnotationMeta>
+          fileDiff={fileDiff}
+          options={options}
+          lineAnnotations={lineAnnotations}
+          selectedLines={selectedLines}
           renderAnnotation={renderAnnotation}
         />
       ) : (

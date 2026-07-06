@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
-import { Markdown } from './Markdown'
+import { Markdown, InlineMarkdown } from './Markdown'
 import { ReferencePanel } from './GuideReference'
 import { cn } from '@/lib/utils'
 import type { SectionKind } from '../../shared/guide-schema'
@@ -92,7 +92,7 @@ export function ScrollStory({ sections, footer, renderReference = defaultRenderR
   return (
     <div className="relative flex-1 min-h-0 flex flex-col">
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto bg-surface">
-        <div className="max-w-5xl mx-auto px-6 py-10 flex flex-col gap-20">
+        <div className="max-w-[1700px] mx-auto px-6 py-10 flex flex-col gap-20">
           {sections.map(section => {
             const Renderer = SECTION_RENDERERS[section.kind]
             return (
@@ -145,12 +145,17 @@ function CodeSection({
 
   return (
     <article className="flex items-start gap-10">
-      <div ref={proseRef} className={cn('flex-1 min-w-0', pin === 'prose' && stickyColumn)}>
+      <div
+        ref={proseRef}
+        className={cn('w-[440px] shrink-0 min-w-0', pin === 'prose' && stickyColumn)}
+      >
         <header className="flex items-baseline gap-2 pb-1.5 mb-3 border-b border-hairline">
           <span className="font-mono text-[11px] text-subtle tabular-nums">
             {String(section.ordinal).padStart(2, '0')}
           </span>
-          <h2 className="m-0 text-[17px] font-semibold leading-snug">{section.title}</h2>
+          <h2 className="m-0 text-[17px] font-semibold leading-snug">
+            <InlineMarkdown>{section.title}</InlineMarkdown>
+          </h2>
         </header>
         <Markdown compact>{section.explanation}</Markdown>
       </div>
