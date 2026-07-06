@@ -76,6 +76,71 @@ describe('SettingsStore', () => {
   test('get() returns a snapshot of the full settings object', () => {
     const store = new SettingsStore(file)
     store.setGuideGuidance('x')
-    expect(store.get()).toEqual({ guideGuidance: 'x' })
+    expect(store.get()).toEqual({ guideGuidance: 'x', repoRoots: [] })
+  })
+})
+
+describe('SettingsStore repo roots', () => {
+  test('a fresh store has no repo roots', () => {
+    expect(new SettingsStore(file).getRepoRoots()).toEqual([])
+  })
+
+  test('addRepoRoot appends a root', () => {
+    const store = new SettingsStore(file)
+    store.addRepoRoot('/Users/me/code')
+    expect(store.getRepoRoots()).toEqual(['/Users/me/code'])
+  })
+
+  test('addRepoRoot is idempotent (no duplicate roots)', () => {
+    const store = new SettingsStore(file)
+    store.addRepoRoot('/Users/me/code')
+    store.addRepoRoot('/Users/me/code')
+    expect(store.getRepoRoots()).toEqual(['/Users/me/code'])
+  })
+
+  test('addRepoRoot trims and ignores empty/whitespace paths', () => {
+    const store = new SettingsStore(file)
+    store.addRepoRoot('  /Users/me/code  ')
+    store.addRepoRoot('   ')
+    expect(store.getRepoRoots()).toEqual(['/Users/me/code'])
+  })
+
+  test('addRepoRoot normalizes a trailing slash so it is not stored twice', () => {
+    const store = new SettingsStore(file)
+    store.addRepoRoot('/Users/me/code')
+    store.addRepoRoot('/Users/me/code/')
+    expect(store.getRepoRoots()).toEqual(['/Users/me/code'])
+  })
+
+  test('removeRepoRoot drops the given root', () => {
+    const store = new SettingsStore(file)
+    store.addRepoRoot('/a')
+    store.addRepoRoot('/b')
+    store.removeRepoRoot('/a')
+    expect(store.getRepoRoots()).toEqual(['/b'])
+  })
+
+  test('repo roots persist across instances', () => {
+    new SettingsStore(file).addRepoRoot('/Users/me/work')
+    expect(new SettingsStore(file).getRepoRoots()).toEqual(['/Users/me/work'])
+  })
+
+  test('repo roots and guidance coexist', () => {
+    const store = new SettingsStore(file)
+    store.setGuideGuidance('focus on auth')
+    store.addRepoRoot('/a')
+    const reopened = new SettingsStore(file)
+    expect(reopened.getGuideGuidance()).toBe('focus on auth')
+    expect(reopened.getRepoRoots()).toEqual(['/a'])
+  })
+
+  test('a wrong-shaped repoRoots field falls back to an empty list', () => {
+    writeFileSync(file, JSON.stringify({ repoRoots: 'not-an-array' }))
+    expect(new SettingsStore(file).getRepoRoots()).toEqual([])
+  })
+
+  test('non-string entries in repoRoots are dropped', () => {
+    writeFileSync(file, JSON.stringify({ repoRoots: ['/a', 42, '', '/b'] }))
+    expect(new SettingsStore(file).getRepoRoots()).toEqual(['/a', '/b'])
   })
 })

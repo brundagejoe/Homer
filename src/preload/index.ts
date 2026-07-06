@@ -144,6 +144,12 @@ export interface GuideFinalizedEvent {
 export interface GuideErrorEvent {
   generationId: string
   message: string
+  /**
+   * Set when the failure was that no local clone of the PR's repo could be
+   * resolved — fixable in Settings → Repository roots. The renderer uses it to
+   * offer an "Open Settings" nudge alongside Retry.
+   */
+  settingsHint?: boolean
 }
 
 /**
@@ -200,6 +206,21 @@ const api = {
     ipcRenderer.invoke('settings:set-guide-guidance', guidance),
   /** Reset the Guide guidance to the shipped default. */
   resetGuideGuidance: (): Promise<void> => ipcRenderer.invoke('settings:reset-guide-guidance'),
+
+  /**
+   * The configured repo root directories discovery scans to find a PR's local
+   * clone when the launch context (`--repo=` / `DV_REPO` / cwd) doesn't already
+   * point at one — so `homer <pr-url>` works from anywhere.
+   */
+  getRepoRoots: (): Promise<string[]> => ipcRenderer.invoke('settings:get-repo-roots'),
+  /** Add a repo root directory; resolves to the updated list. */
+  addRepoRoot: (path: string): Promise<string[]> =>
+    ipcRenderer.invoke('settings:add-repo-root', path),
+  /** Remove a repo root directory; resolves to the updated list. */
+  removeRepoRoot: (path: string): Promise<string[]> =>
+    ipcRenderer.invoke('settings:remove-repo-root', path),
+  /** Open a native directory picker; resolves to the chosen path, or null if cancelled. */
+  chooseDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:choose-directory'),
 
   /**
    * Start generating the Guide for a PR under a caller-supplied `generationId`.

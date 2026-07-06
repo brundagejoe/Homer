@@ -29,8 +29,16 @@ export interface AgentRunnerDeps {
   worktrees: PrWorktreeManager
   /** Resolves the GitHub client (PR details + diff); null when `gh` isn't authed. */
   github: () => Promise<GitHubClient | null>
-  /** The local repo the app was launched in — the source repo for the worktree. */
-  repoPath: string
+  /**
+   * Resolves the source repo the PR Worktree is materialized from, per
+   * generation, from the PR's owner/repo: the launch context (`--repo=` /
+   * `DV_REPO` / cwd) if it's a clone of this PR's repo, else an auto-discovered
+   * clone under the configured repo roots. Rejects (e.g. `RepoNotFoundError`)
+   * when none is found. Called lazily — only on a cache miss, never when a cached
+   * Guide replays — so re-opening a PR at a known SHA stays instant and works
+   * even launched from an unrelated directory.
+   */
+  sourceRepoPath: (request: GuideRequest) => Promise<string>
   config: AgentConfig
   /**
    * The effective custom Guide guidance (the editable half of the system
@@ -72,6 +80,11 @@ export class AgentRunner implements GuideSource {
   async *generate(request: GuideRequest, signal?: AbortSignal): AsyncIterable<GuideEvent> {
     if (signal?.aborted) return
 
+    // Resolve the source repo first — it's the most actionable failure (fixable
+    // in Settings) and needs no network, so surface it before the gh/API calls.
+    const repoPath = await this.deps.sourceRepoPath(request)
+    if (signal?.aborted) return
+
     const client = await this.deps.github()
     if (!client) {
       throw new Error('Cannot generate the Guide: the GitHub CLI (`gh`) is not authenticated.')
@@ -83,7 +96,7 @@ export class AgentRunner implements GuideSource {
     const pr = await client.getPR(request.owner, request.repo, request.number)
     const diff = await client.getPRDiff(request.owner, request.repo, request.number)
     if (signal?.aborted) return
-    const worktreePath = await this.deps.worktrees.acquire(this.deps.repoPath, request.headSha)
+    const worktreePath = await this.deps.worktrees.acquire(repoPath, request.headSha)
     if (signal?.aborted) return
 
     const host = new GuideToolHost(makeResolver(worktreePath, diff))

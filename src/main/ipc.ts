@@ -1,5 +1,6 @@
-import { ipcMain } from 'electron'
+import { dialog, ipcMain } from 'electron'
 import { FileStatus } from './git-diff-provider'
+import { RepoNotFoundError } from './repo-discovery'
 import { PendingReview, ReviewTarget } from './pending-review-store'
 import { toGitHubReview } from './review-formatter'
 import { AuthStatus } from './gh-auth-resolver'
@@ -30,6 +31,10 @@ export const CHANNELS = {
   settingsGetGuide: 'settings:get-guide',
   settingsSetGuideGuidance: 'settings:set-guide-guidance',
   settingsResetGuideGuidance: 'settings:reset-guide-guidance',
+  settingsGetRepoRoots: 'settings:get-repo-roots',
+  settingsAddRepoRoot: 'settings:add-repo-root',
+  settingsRemoveRepoRoot: 'settings:remove-repo-root',
+  dialogChooseDirectory: 'dialog:choose-directory',
   guideGenerate: 'guide:generate',
   // Main → renderer streaming events (pushed via webContents.send).
   guideSectionEmitted: 'guide:section-emitted',
@@ -108,6 +113,30 @@ export function registerIpcHandlers(): void {
     settingsStore().resetGuideGuidance()
   )
 
+  // Settings: the repo root directories discovery scans to find a PR's local
+  // clone when the launch context doesn't already point at one. Add/remove each
+  // return the updated list so the renderer stays in sync without a re-fetch.
+  ipcMain.handle(CHANNELS.settingsGetRepoRoots, (): string[] => settingsStore().getRepoRoots())
+  ipcMain.handle(CHANNELS.settingsAddRepoRoot, (_e, path: string): string[] => {
+    settingsStore().addRepoRoot(path)
+    return settingsStore().getRepoRoots()
+  })
+  ipcMain.handle(CHANNELS.settingsRemoveRepoRoot, (_e, path: string): string[] => {
+    settingsStore().removeRepoRoot(path)
+    return settingsStore().getRepoRoots()
+  })
+
+  // Native directory picker for adding a repo root. Returns the chosen absolute
+  // path, or null when the user cancels.
+  ipcMain.handle(CHANNELS.dialogChooseDirectory, async (): Promise<string | null> => {
+    const result = await dialog.showOpenDialog({
+      title: 'Choose a repository root',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+
   ipcMain.handle(
     CHANNELS.guideGenerate,
     async (
@@ -149,9 +178,15 @@ export function registerIpcHandlers(): void {
         }
       } catch (err) {
         if (!signal.aborted && !sender.isDestroyed()) {
+          // A RepoNotFoundError is fixable in Settings → Repository roots, so
+          // flag it for the renderer to offer an "Open Settings" nudge — most
+          // pointed for a first-time user with no roots configured, but useful
+          // either way (add another root).
+          const settingsHint = err instanceof RepoNotFoundError
           sender.send(CHANNELS.guideError, {
             generationId,
-            message: (err as Error).message ?? String(err)
+            message: (err as Error).message ?? String(err),
+            settingsHint
           })
         }
       } finally {

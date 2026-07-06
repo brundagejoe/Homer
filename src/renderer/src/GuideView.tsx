@@ -6,6 +6,7 @@ import type { CoverageMap } from '../../shared/guide-schema'
 import type { RenderableSection } from '../../shared/guide-view'
 import { ScrollStory, type RenderReference } from './ScrollStory'
 import { GuideReferencePanel } from './GuideReference'
+import { openSettings } from './SettingsDialog'
 import type { UseReviewDraft } from './useReviewDraft'
 
 /**
@@ -22,6 +23,9 @@ export interface GuideState {
   sections: RenderableSection[]
   status: GuideStatus
   error?: string
+  /** The Guide failed because no local clone of the PR's repo was found —
+   *  fixable in Settings → Repository roots; surfaces an "Open Settings" nudge. */
+  settingsHint?: boolean
   coverage?: CoverageMap
 }
 
@@ -57,9 +61,9 @@ export function useGuide(target: PrTarget): GuideState & { retry: () => void } {
       if (id !== generationId) return
       setState(prev => ({ ...prev, status: 'done', coverage }))
     })
-    const offError = window.api.onGuideError(({ generationId: id, message }) => {
+    const offError = window.api.onGuideError(({ generationId: id, message, settingsHint }) => {
       if (id !== generationId) return
-      setState(prev => ({ ...prev, status: 'error', error: message }))
+      setState(prev => ({ ...prev, status: 'error', error: message, settingsHint }))
     })
 
     window.api.startGuide(target, generationId)
@@ -96,7 +100,7 @@ export function GuideView({
   /** Whether the diff has loaded — authoring is gated on it (ADR 0001). */
   diffLoaded?: boolean
 }) {
-  const { sections, status, error, coverage } = guide
+  const { sections, status, error, settingsHint, coverage } = guide
 
   // Author into the shared draft on changed (diff) references once the diff has
   // loaded; context (full) references and the pre-load window stay read-only
@@ -125,7 +129,7 @@ export function GuideView({
     return (
       <CenteredNote tone="danger">
         <span>Guide generation failed: {error}</span>
-        <RetryButton onRetry={onRetry} />
+        <ErrorActions onRetry={onRetry} settingsHint={settingsHint} />
       </CenteredNote>
     )
   }
@@ -138,7 +142,7 @@ export function GuideView({
       {status === 'error' && (
         <div className="flex items-center gap-3 border-t border-hairline pt-4">
           <p className="m-0 text-[12.5px] text-danger">Guide generation failed: {error}</p>
-          <RetryButton onRetry={onRetry} />
+          <ErrorActions onRetry={onRetry} settingsHint={settingsHint} />
         </div>
       )}
       {status === 'done' && coverage && <CoverageNote coverage={coverage} />}
@@ -148,11 +152,23 @@ export function GuideView({
   return <ScrollStory sections={sections} footer={footer} renderReference={renderReference} />
 }
 
-function RetryButton({ onRetry }: { onRetry: () => void }) {
+/**
+ * Actions offered when generation fails: always a Retry; plus an "Open Settings"
+ * nudge when the failure was that no local clone of the PR's repo could be found
+ * (fixable by adding a repository root).
+ */
+function ErrorActions({ onRetry, settingsHint }: { onRetry: () => void; settingsHint?: boolean }) {
   return (
-    <Button size="sm" onClick={onRetry}>
-      Retry
-    </Button>
+    <div className="flex items-center gap-2">
+      {settingsHint && (
+        <Button size="sm" variant="primary" onClick={openSettings}>
+          Open Settings
+        </Button>
+      )}
+      <Button size="sm" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
   )
 }
 
