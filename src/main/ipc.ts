@@ -5,11 +5,13 @@ import { toGitHubReview } from './review-formatter'
 import { AuthStatus } from './gh-auth-resolver'
 import { PullRequestDetails, InlineComment, ConversationComment } from './github-client'
 import { WindowGenerations } from './generation-registry'
+import { DEFAULT_GUIDE_GUIDANCE } from './agent-prompt'
 import {
   ghAuth,
   githubClient,
   guideSource,
   pendingReviewStore,
+  settingsStore,
   worktreeManager
 } from './services'
 
@@ -25,6 +27,9 @@ export const CHANNELS = {
   githubCommitsAhead: 'github:commits-ahead',
   reviewSubmitToGithub: 'review:submit-to-github',
   worktreeClear: 'worktree:clear',
+  settingsGetGuide: 'settings:get-guide',
+  settingsSetGuideGuidance: 'settings:set-guide-guidance',
+  settingsResetGuideGuidance: 'settings:reset-guide-guidance',
   guideGenerate: 'guide:generate',
   // Main → renderer streaming events (pushed via webContents.send).
   guideSectionEmitted: 'guide:section-emitted',
@@ -38,6 +43,17 @@ export interface FileWithPatch {
   status: FileStatus
   isBinary: boolean
   patch: string
+}
+
+/**
+ * The Guide-guidance settings the renderer needs: the user's saved `custom`
+ * guidance (null when unset) plus the shipped `default`, so Settings can prefill
+ * the current guidance and show the default as a known baseline to edit / reset
+ * to.
+ */
+export interface GuideSettings {
+  custom: string | null
+  default: string
 }
 
 /**
@@ -73,6 +89,24 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(CHANNELS.worktreeClear, async (): Promise<void> => worktreeManager().clear())
+
+  // Settings: the editable Guide-generation guidance. The fixed emit/finalize
+  // contract lives in `agent-prompt` and is never exposed here, so nothing the
+  // renderer sends can strip it — a bad edit only changes tone, never the
+  // machine contract or the section cap.
+  ipcMain.handle(
+    CHANNELS.settingsGetGuide,
+    (): GuideSettings => ({
+      custom: settingsStore().getGuideGuidance(),
+      default: DEFAULT_GUIDE_GUIDANCE
+    })
+  )
+  ipcMain.handle(CHANNELS.settingsSetGuideGuidance, (_e, guidance: string | null): void =>
+    settingsStore().setGuideGuidance(guidance)
+  )
+  ipcMain.handle(CHANNELS.settingsResetGuideGuidance, (): void =>
+    settingsStore().resetGuideGuidance()
+  )
 
   ipcMain.handle(
     CHANNELS.guideGenerate,

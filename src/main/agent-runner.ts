@@ -32,6 +32,14 @@ export interface AgentRunnerDeps {
   /** The local repo the app was launched in — the source repo for the worktree. */
   repoPath: string
   config: AgentConfig
+  /**
+   * The effective custom Guide guidance (the editable half of the system
+   * prompt), read fresh per run so a Settings change applies to the next
+   * generation. Returns `null`/undefined to use the shipped default. Optional —
+   * absent means always-default. The fixed emit/finalize contract is added by
+   * `buildSystemPrompt` regardless, so a bad value can never break generation.
+   */
+  guidance?: () => string | null | undefined
   /** Override the spawn implementation (defaults to node's child_process.spawn). */
   spawnFn?: SpawnFn
 }
@@ -170,7 +178,7 @@ export class AgentRunner implements GuideSource {
       '--model',
       model,
       '--system-prompt',
-      buildSystemPrompt(GUIDE_TOOL_NAMES),
+      buildSystemPrompt(GUIDE_TOOL_NAMES, this.deps.guidance?.()),
       '--mcp-config',
       mcpConfigJson,
       '--strict-mcp-config', // ignore the user's other MCP servers; only ours

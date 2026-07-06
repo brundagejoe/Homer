@@ -10,6 +10,7 @@ import { GuideSource, StubGuideSource } from './guide-source'
 import { AgentRunner } from './agent-runner'
 import { CachingGuideSource } from './caching-guide-source'
 import { GuideStore } from './guide-store'
+import { SettingsStore } from './settings-store'
 import { resolveAgentConfig, type McpBridgeSpec } from './agent-config'
 
 /**
@@ -90,6 +91,19 @@ export function guideStore(): GuideStore {
   return guideStoreInstance
 }
 
+let settingsStoreInstance: SettingsStore | null = null
+/**
+ * Durable app settings (JSON under `userData`). Currently holds the user's
+ * custom Guide-generation guidance; `null` there means "use the shipped
+ * default". Shared so the IPC handlers and the Agent read the same instance.
+ */
+export function settingsStore(): SettingsStore {
+  if (!settingsStoreInstance) {
+    settingsStoreInstance = new SettingsStore(join(app.getPath('userData'), 'settings.json'))
+  }
+  return settingsStoreInstance
+}
+
 let guideSourceInstance: GuideSource | null = null
 /**
  * The Guide generation seam. Default is the real `claude` Agent (`AgentRunner`)
@@ -113,7 +127,11 @@ export function guideSource(): GuideSource {
       // The app is launched from inside the PR's repo (`dv <pr-url>`), so the
       // launch cwd is the source repo the worktree is materialized from.
       repoPath: process.cwd(),
-      config: resolveAgentConfig(toolBridgeSpec())
+      config: resolveAgentConfig(toolBridgeSpec()),
+      // Read the effective custom guidance lazily, per run, so a Settings edit
+      // takes effect on the next generation without restarting the app. `null`
+      // (unset) means the shipped default guidance is used.
+      guidance: () => settingsStore().getGuideGuidance()
     })
     // The head SHA — the last axis of the cache key — is resolved once in the
     // `guide:generate` IPC handler and travels in the `GuideRequest`, so the

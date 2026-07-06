@@ -146,6 +146,17 @@ export interface GuideErrorEvent {
   message: string
 }
 
+/**
+ * The editable Guide-generation guidance for Settings: the user's saved
+ * `custom` guidance (null when unset) and the shipped `default` shown as a
+ * known baseline. The fixed emit/finalize contract is never part of this — it is
+ * always enforced in the main process — so editing this can't break generation.
+ */
+export interface GuideSettings {
+  custom: string | null
+  default: string
+}
+
 const api = {
   prTarget,
   onNavigate: (cb: (route: NavRoute) => void): (() => void) => {
@@ -175,6 +186,20 @@ const api = {
     ipcRenderer.invoke('github:commits-ahead', { ...t, base, head }),
   /** Manual "clear cached checkouts": remove all cached PR Worktrees. */
   worktreeClearCache: (): Promise<void> => ipcRenderer.invoke('worktree:clear'),
+
+  /**
+   * Read the Guide-generation guidance for Settings: the saved custom guidance
+   * (null when unset) plus the shipped default baseline.
+   */
+  getGuideSettings: (): Promise<GuideSettings> => ipcRenderer.invoke('settings:get-guide'),
+  /**
+   * Save custom Guide guidance (empty/whitespace clears back to the default).
+   * The next Guide generation uses it; the fixed contract + cap always stay.
+   */
+  setGuideGuidance: (guidance: string | null): Promise<void> =>
+    ipcRenderer.invoke('settings:set-guide-guidance', guidance),
+  /** Reset the Guide guidance to the shipped default. */
+  resetGuideGuidance: (): Promise<void> => ipcRenderer.invoke('settings:reset-guide-guidance'),
 
   /**
    * Start generating the Guide for a PR under a caller-supplied `generationId`.

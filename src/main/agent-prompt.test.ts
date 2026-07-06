@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'bun:test'
 import {
   SECTION_CAP,
+  DEFAULT_GUIDE_GUIDANCE,
   buildSystemPrompt,
   buildUserPrompt,
   type PromptPrDetails
@@ -33,15 +34,52 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain(String(SECTION_CAP))
   })
 
-  test('instructs tight prose, prioritising load-bearing changes, and honest degradation', () => {
+  test('includes the shipped default guidance (tight prose, load-bearing) by default', () => {
+    expect(prompt).toContain(DEFAULT_GUIDE_GUIDANCE)
     const lower = prompt.toLowerCase()
     expect(lower).toContain('load-bearing')
     expect(lower).toContain('tight')
-    expect(lower).toMatch(/diff view/)
+  })
+
+  test('always states honest degradation onto the Diff view (contract)', () => {
+    expect(prompt.toLowerCase()).toMatch(/diff view/)
   })
 
   test('the cap is configurable', () => {
-    expect(buildSystemPrompt(NAMES, 4)).toContain('4')
+    expect(buildSystemPrompt(NAMES, null, 4)).toContain('4')
+  })
+
+  describe('custom guidance', () => {
+    const custom = 'Always narrate the tests last, and focus on the auth flow.'
+
+    test('includes the custom guidance when provided', () => {
+      const p = buildSystemPrompt(NAMES, custom)
+      expect(p).toContain(custom)
+    })
+
+    test('drops the shipped default when a custom guidance is provided', () => {
+      const p = buildSystemPrompt(NAMES, custom)
+      expect(p).not.toContain(DEFAULT_GUIDE_GUIDANCE)
+    })
+
+    test('keeps the fixed contract + cap present even with custom guidance', () => {
+      const p = buildSystemPrompt(NAMES, custom)
+      expect(p).toContain(NAMES.emitSection)
+      expect(p).toContain(NAMES.finalizeGuide)
+      expect(p).toContain(String(SECTION_CAP))
+      expect(p.toLowerCase()).toMatch(/diff view/)
+    })
+
+    test('keeps the fixed contract even with an empty/garbage guidance', () => {
+      for (const bad of ['', '   ', '\n\t']) {
+        const p = buildSystemPrompt(NAMES, bad)
+        expect(p).toContain(NAMES.emitSection)
+        expect(p).toContain(NAMES.finalizeGuide)
+        expect(p).toContain(String(SECTION_CAP))
+        // Falls back to the shipped default guidance.
+        expect(p).toContain(DEFAULT_GUIDE_GUIDANCE)
+      }
+    })
   })
 })
 

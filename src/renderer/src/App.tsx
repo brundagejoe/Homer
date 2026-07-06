@@ -7,6 +7,7 @@ import { GuideView, useGuide } from './GuideView'
 import { useReviewWorkspace } from './useReviewWorkspace'
 import { usePrStaleness } from './usePrStaleness'
 import { Markdown } from './Markdown'
+import { SettingsButton } from './SettingsDialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -96,6 +97,7 @@ function NoPrView() {
       <TitleBar>
         <span className="flex-1 truncate font-semibold text-fg">Guided PR Review</span>
         <GhAuthIndicator />
+        <SettingsButton />
         <HelpButton />
       </TitleBar>
       <section className="flex-1 grid place-items-center px-6">
@@ -236,6 +238,7 @@ function Window({ target }: { target: PrTarget }) {
         {loaded && <StateBadge state={loaded.pr.state} />}
         <OpenOnGithubButton url={loaded?.pr.url || prHtmlUrl(target)} />
         <GhAuthIndicator />
+        <SettingsButton />
         <HelpButton />
       </TitleBar>
       {staleness.stale && (
