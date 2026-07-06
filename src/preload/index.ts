@@ -1,41 +1,25 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
-const REPO_PATH_FLAG = '--repo-path='
 const PR_FLAG = '--pr='
-const PURPOSE_FLAG = '--purpose='
-const LAUNCH_REPO_FLAG = '--launch-repo='
 
-const repoPathArg = process.argv.find(a => a.startsWith(REPO_PATH_FLAG))
-const repoPath = repoPathArg ? repoPathArg.slice(REPO_PATH_FLAG.length) : process.cwd()
-const purposeArg = process.argv.find(a => a.startsWith(PURPOSE_FLAG))
-const purpose: 'inbox' | 'local' | 'pr-review' =
-  purposeArg === '--purpose=inbox'
-    ? 'inbox'
-    : purposeArg === '--purpose=pr-review'
-      ? 'pr-review'
-      : 'local'
+/**
+ * The PR this window was launched for, parsed from the `--pr=` flag the
+ * main process builds from the `dv <pr-url>` argument. Null when launched
+ * without a PR URL — the renderer then shows a "paste a PR URL" state.
+ */
 const prFlag = process.argv.find(a => a.startsWith(PR_FLAG))
 const prTarget = prFlag
   ? (() => {
       const [owner, repo, num] = prFlag.slice(PR_FLAG.length).split('/')
+      if (!owner || !repo || !num || Number.isNaN(Number(num))) return null
       return { owner, repo, number: Number(num) }
     })()
   : null
-/**
- * The local repo this window was launched from, if any. Lets the inbox
- * offer a jump back to that repo's local changes. Null when launched
- * via a PR URL or with no repo.
- */
-const launchRepoArg = process.argv.find(a => a.startsWith(LAUNCH_REPO_FLAG))
-const launchRepo = launchRepoArg ? launchRepoArg.slice(LAUNCH_REPO_FLAG.length) : null
 
 /** In-window navigation events pushed by the main process (a second
- *  `dv` invocation focuses this window and navigates it in place). */
-export type NavRoute =
-  | { kind: 'inbox' }
-  | { kind: 'local'; repoPath: string }
-  | { kind: 'pr'; target: { owner: string; repo: string; number: number } }
+ *  `dv <pr-url>` invocation focuses this window and points it at that PR). */
+export type NavRoute = { kind: 'pr'; target: { owner: string; repo: string; number: number } }
 
 export type FileStatus = 'added' | 'modified' | 'deleted' | 'renamed'
 
@@ -168,10 +152,7 @@ export interface PrTarget {
 }
 
 const api = {
-  repoPath,
-  purpose,
   prTarget,
-  launchRepo,
   onNavigate: (cb: (route: NavRoute) => void): (() => void) => {
     const listener = (_e: unknown, route: NavRoute): void => cb(route)
     ipcRenderer.on('app:navigate', listener)

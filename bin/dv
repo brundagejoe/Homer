@@ -1,16 +1,17 @@
 #!/bin/sh
-# dv — launch Diff Viewer (single window; navigate between inbox, PRs,
-#      and local changes inside it).
-#   dv                                 → $PWD's code view if it has
-#                                        active changes, else the inbox
-#   dv /path/to/repo                   → that repo's changes, else inbox
-#   dv https://github.com/o/r/pull/N   → that PR
-# A second `dv` while a window is open focuses it and navigates in place.
+# dv — launch Guided PR Review for a GitHub pull request.
+#   dv https://github.com/owner/repo/pull/N   → review that PR
+# Opens a single window with three tabs (Activity · Guide · Diff),
+# landing on Activity. A second `dv <pr-url>` while a window is open
+# focuses it and points it at that PR.
 set -e
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 if [ ! -f "$APP_DIR/out/main/index.js" ]; then
-  echo "diff-viewer build not found. Run 'bun run build' in $APP_DIR first." >&2
+  echo "build not found. Run 'bun run build' in $APP_DIR first." >&2
   exit 1
 fi
-TARGET="${1:-$(pwd)}"
-exec "$APP_DIR/node_modules/.bin/electron" "$APP_DIR" "$TARGET"
+if [ -z "$1" ]; then
+  echo "usage: dv <github-pr-url>" >&2
+  exit 1
+fi
+exec "$APP_DIR/node_modules/.bin/electron" "$APP_DIR" "$1"
