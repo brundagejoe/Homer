@@ -175,7 +175,9 @@ const api = {
   githubGetPRInlineComments: (t: PrTarget): Promise<InlineComment[]> =>
     ipcRenderer.invoke('github:get-pr-inline-comments', t),
   githubGetPRConversation: (t: PrTarget): Promise<ConversationComment[]> =>
-    ipcRenderer.invoke('github:get-pr-conversation', t)
+    ipcRenderer.invoke('github:get-pr-conversation', t),
+  /** Manual "clear cached checkouts": remove all cached PR Worktrees. */
+  worktreeClearCache: (): Promise<void> => ipcRenderer.invoke('worktree:clear')
 }
 
 export type DiffViewerApi = typeof api

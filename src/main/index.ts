@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { join } from 'node:path'
-import { registerIpcHandlers } from './ipc'
+import { registerIpcHandlers, worktreeManager } from './ipc'
 import { buildLaunchArgs, resolveLaunchTarget, type PrTarget } from './launch'
 import { WindowStateStore } from './window-state-store'
 
@@ -109,13 +109,21 @@ if (!app.requestSingleInstanceLock()) {
     openOrNavigate(argv)
   })
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     electronApp.setAppUserModelId('com.brundagejoe.diff-viewer')
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
     })
 
     registerIpcHandlers()
+
+    // Startup sweep: clean up PR Worktrees left behind by a crashed session
+    // (prune stale registrations + delete orphan folders) before we begin.
+    // Awaited so it can't race a first acquire over the shared index.
+    await worktreeManager()
+      .sweep()
+      .catch(err => console.error('PR worktree sweep failed', err))
+
     openOrNavigate(process.argv)
 
     app.on('activate', () => {
@@ -123,6 +131,16 @@ if (!app.requestSingleInstanceLock()) {
         openOrNavigate(process.argv)
       }
     })
+  })
+
+  // Session-close cleanup: release the PR Worktrees this session materialized.
+  app.on('before-quit', event => {
+    const mgr = worktreeManager()
+    event.preventDefault()
+    mgr
+      .releaseAll()
+      .catch(err => console.error('PR worktree release failed', err))
+      .finally(() => app.exit(0))
   })
 
   app.on('window-all-closed', () => {

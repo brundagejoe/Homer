@@ -6,6 +6,7 @@ import { PendingReviewStore, PendingReview, ReviewTarget } from './pending-revie
 import { toAgentPrompt, toGitHubReview } from './review-formatter'
 import { GhAuthResolver, AuthStatus } from './gh-auth-resolver'
 import { GitHubClient, InboxResult, OctokitLike, PullRequestDetails, InlineComment, ConversationComment } from './github-client'
+import { PrWorktreeManager } from './pr-worktree-manager'
 import { splitPatchByFile } from '../shared/split-patch'
 
 export const CHANNELS = {
@@ -20,7 +21,8 @@ export const CHANNELS = {
   githubGetPRDiff: 'github:get-pr-diff',
   githubGetPRInlineComments: 'github:get-pr-inline-comments',
   githubGetPRConversation: 'github:get-pr-conversation',
-  reviewSubmitToGithub: 'review:submit-to-github'
+  reviewSubmitToGithub: 'review:submit-to-github',
+  worktreeClear: 'worktree:clear'
 } as const
 
 export interface FileWithPatch {
@@ -53,6 +55,22 @@ function store(): PendingReviewStore {
     storeInstance = new PendingReviewStore(join(app.getPath('userData'), 'pending-reviews.json'))
   }
   return storeInstance
+}
+
+let worktreeManagerInstance: PrWorktreeManager | null = null
+
+/**
+ * Shared PR Worktree manager. The cache dir lives under Electron's `userData`,
+ * outside any user repo. Exposed so the app entry can run the startup sweep and
+ * session-close cleanup against the same instance the IPC clear action uses.
+ */
+export function worktreeManager(): PrWorktreeManager {
+  if (!worktreeManagerInstance) {
+    worktreeManagerInstance = new PrWorktreeManager({
+      cacheDir: join(app.getPath('userData'), 'pr-worktrees')
+    })
+  }
+  return worktreeManagerInstance
 }
 
 export function registerIpcHandlers(): void {
@@ -101,6 +119,8 @@ export function registerIpcHandlers(): void {
     store().delete(review.target)
     return { url: result.html_url }
   })
+
+  ipcMain.handle(CHANNELS.worktreeClear, async (): Promise<void> => worktreeManager().clear())
 
   ipcMain.handle(CHANNELS.ghAuthStatus, async (): Promise<AuthStatus> => ghAuth.status())
 
