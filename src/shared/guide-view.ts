@@ -1,4 +1,4 @@
-import type { CodeReference, Section } from './guide-schema'
+import type { CodeReference, LineRange, RenderMode, Section } from './guide-schema'
 
 /**
  * Render/wire shapes for the Guide — the display-resolved types that cross the
@@ -22,6 +22,52 @@ export interface RenderableReference extends CodeReference {
 /** A validated Section with its references resolved to displayable content. */
 export interface RenderableSection extends Omit<Section, 'references'> {
   references: RenderableReference[]
+}
+
+/**
+ * A Section's references to ONE file, coalesced into a single panel. A Section
+ * may point at the same file at several spans (e.g. L23–26, L168–178, L191–198);
+ * each such reference resolves to the WHOLE file's content, so rendering them
+ * one-by-one paints the file repeatedly. Grouping by `path` + `renderMode`
+ * yields one panel per file: `content` is that file's shared content (identical
+ * across the group) and `ranges` is every span the Section pointed at, in the
+ * order first seen. The panel slices `content` to the hunks overlapping `ranges`
+ * (diff mode) or scrolls the first range into view (full mode).
+ */
+export interface ReferenceGroup {
+  path: string
+  renderMode: RenderMode
+  kind: 'code'
+  content: string
+  ranges: LineRange[]
+}
+
+/**
+ * Coalesce a Section's references into one group per file, keyed by `path` +
+ * `renderMode`, preserving first-seen order. Each group collects its `ranges`
+ * in reference order and takes `content` from the group's first reference — all
+ * references to the same file resolve to identical content, so the first is
+ * authoritative. Splitting on `renderMode` too keeps a diff view and a full-file
+ * view of the same path as distinct panels (they render differently).
+ */
+export function groupReferencesByFile(refs: readonly RenderableReference[]): ReferenceGroup[] {
+  const groups = new Map<string, ReferenceGroup>()
+  for (const ref of refs) {
+    const key = `${ref.renderMode}\0${ref.path}`
+    const existing = groups.get(key)
+    if (existing) {
+      existing.ranges.push(ref.lineRange)
+    } else {
+      groups.set(key, {
+        path: ref.path,
+        renderMode: ref.renderMode,
+        kind: 'code',
+        content: ref.content,
+        ranges: [ref.lineRange]
+      })
+    }
+  }
+  return [...groups.values()]
 }
 
 /**

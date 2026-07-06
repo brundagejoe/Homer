@@ -4,7 +4,8 @@ import { Markdown, InlineMarkdown } from './Markdown'
 import { ReferencePanel } from './GuideReference'
 import { cn } from '@/lib/utils'
 import type { SectionKind } from '../../shared/guide-schema'
-import type { RenderableReference, RenderableSection } from '../../shared/guide-view'
+import type { ReferenceGroup, RenderableSection } from '../../shared/guide-view'
+import { groupReferencesByFile } from '../../shared/guide-view'
 import { choosePinSide, resolveActiveOrdinal, formatProgress, type PinSide } from './scroll-story-layout'
 
 /**
@@ -23,12 +24,14 @@ import { choosePinSide, resolveActiveOrdinal, formatProgress, type PinSide } fro
  * scroll flow after the last Section but is otherwise opaque to this module.
  */
 /**
- * How a single Code Reference is rendered. Injected by the caller so
+ * How one file's coalesced references are rendered. A Section's references are
+ * grouped by file (`groupReferencesByFile`) into one panel per file, so this
+ * receives a `ReferenceGroup`, not a single reference. Injected by the caller so
  * ScrollStory owns only layout/pinning/progress and stays ignorant of what a
  * reference panel does — the Guide tab passes an authoring-enabled renderer,
  * a plain reader gets the read-only default.
  */
-export type RenderReference = (reference: RenderableReference, key: string) => ReactNode
+export type RenderReference = (group: ReferenceGroup, key: string) => ReactNode
 
 export interface ScrollStoryProps {
   /** The Sections to narrate, already ordered by the caller. */
@@ -39,8 +42,8 @@ export interface ScrollStoryProps {
   renderReference?: RenderReference
 }
 
-const defaultRenderReference: RenderReference = (reference, key) => (
-  <ReferencePanel key={key} reference={reference} />
+const defaultRenderReference: RenderReference = (group, key) => (
+  <ReferencePanel key={key} group={group} />
 )
 
 /**
@@ -160,7 +163,9 @@ function CodeSection({
         <Markdown compact>{section.explanation}</Markdown>
       </div>
       <div ref={codeRef} className={cn('flex-1 min-w-0 flex flex-col gap-3', pin === 'code' && stickyColumn)}>
-        {section.references.map((ref, i) => renderReference(ref, `${ref.path}-${i}`))}
+        {groupReferencesByFile(section.references).map((group, i) =>
+          renderReference(group, `${group.path}-${i}`)
+        )}
       </div>
     </article>
   )

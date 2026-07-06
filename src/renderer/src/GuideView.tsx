@@ -105,10 +105,10 @@ export function GuideView({
   const renderReference = useMemo<RenderReference | undefined>(
     () =>
       draft
-        ? (reference, key) => (
+        ? (group, key) => (
             <GuideReferencePanel
               key={key}
-              reference={reference}
+              group={group}
               draft={draft}
               startDraft={draft.startDraft}
               diffLoaded={diffLoaded}
