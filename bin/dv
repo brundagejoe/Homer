@@ -1,9 +1,13 @@
 #!/bin/sh
-# dv — launch Guided PR Review for a GitHub pull request.
+# dv — launch Homer for a GitHub pull request.
 #   dv https://github.com/owner/repo/pull/N   → review that PR
 # Opens a single window with three tabs (Activity · Guide · Diff),
 # landing on Activity. A second `dv <pr-url>` while a window is open
 # focuses it and points it at that PR.
+#
+# This is the DEV path: it runs Electron against this repo's built `out/`.
+# The command name stays `dv`. The global-install path (packaged .app +
+# a `dv` on PATH that launches it) is handled separately in #35.
 set -e
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 if [ ! -f "$APP_DIR/out/main/index.js" ]; then

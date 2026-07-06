@@ -6,6 +6,22 @@ import { worktreeManager } from './services'
 import { buildLaunchArgs, resolveLaunchTarget, type PrTarget } from './launch'
 import { WindowStateStore } from './window-state-store'
 
+/** Product identity. Keep in sync with package.json `productName`/`build.appId`. */
+const PRODUCT_NAME = 'Homer'
+const APP_ID = 'com.brundagejoe.homer'
+
+/**
+ * The app icon lives in `build/` (source SVG + generated raster/icns).
+ * On macOS the dock/app icon comes from the packaged `.icns`; this PNG is
+ * used for the BrowserWindow on Windows/Linux and for the dock during dev.
+ */
+const APP_ICON = join(app.getAppPath(), 'build', 'icon.png')
+
+// Set the app name as early as possible so the macOS menu bar, dock, and
+// About panel read "Homer" rather than "Electron" (belt-and-suspenders with
+// package.json `productName`).
+app.setName(PRODUCT_NAME)
+
 /** Renderer-facing navigation event shape (matches NavRoute in preload). */
 type NavRoute = { kind: 'pr'; target: PrTarget }
 
@@ -73,7 +89,8 @@ function openOrNavigate(argv: string[]): void {
     y: bounds.y,
     show: false,
     autoHideMenuBar: true,
-    title: 'Guided PR Review',
+    title: PRODUCT_NAME,
+    icon: APP_ICON,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     backgroundColor: '#ffffff',
@@ -111,7 +128,21 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(async () => {
-    electronApp.setAppUserModelId('com.brundagejoe.diff-viewer')
+    electronApp.setAppUserModelId(APP_ID)
+
+    // De-Electron-ify the About panel (Cmd-click app menu → About Homer).
+    app.setAboutPanelOptions({
+      applicationName: PRODUCT_NAME,
+      applicationVersion: app.getVersion(),
+      credits: 'A guided tour of a GitHub PR.'
+    })
+
+    // Show the custom icon in the dock during `bun run dev` (packaged builds
+    // get it from the bundled .icns). Guarded: dock exists on macOS only.
+    if (is.dev && process.platform === 'darwin' && app.dock) {
+      app.dock.setIcon(APP_ICON)
+    }
+
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
     })
