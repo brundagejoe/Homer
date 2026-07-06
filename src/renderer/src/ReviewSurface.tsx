@@ -122,17 +122,13 @@ export interface ReviewSurfaceShell {
 }
 
 /**
- * The mechanics shared by both review surfaces: collapse state, the
- * Pierre CodeView item list, scroll-to-selected-file, the file-tree /
- * conversation / panel layout toggles, and their keyboard shortcuts.
+ * The mechanics of a review surface that are independent of authoring:
+ * collapse state, the Pierre CodeView item list, scroll-to-selected-file,
+ * the file-tree / panel layout toggles, and their keyboard shortcuts.
  *
- * This is the half of a review surface that doesn't change between the
- * PR Review and Local Mode views — extracted so the two views supply
- * only their differing chrome (title bar, conversation pane, review
- * panel, annotation rendering) rather than each carrying a copy.
- *
- * `startReview` / `startDraft` open the panel (and Code view) as a side
- * effect, then delegate to the supplied draft machine.
+ * Its only live consumer is the read-only Diff view; the drafting hooks
+ * (`draft`, `startReview` / `startDraft`) are kept for when Line Comment
+ * authoring lands. With no `draft` supplied they are no-ops.
  */
 export function useReviewSurfaceShell(args: {
   files: CodeFile[]
@@ -140,10 +136,16 @@ export function useReviewSurfaceShell(args: {
   model: FileTreeModel
   selectedPath: string | undefined
   codeViewRef: RefObject<CodeViewHandle<AnnotationMeta> | null>
-  draft: UseReviewDraft
+  /**
+   * The Pending Review drafting machine. Optional: a read-only surface
+   * (e.g. the Diff view before review authoring lands) reuses all the
+   * shell's tree/collapse/scroll mechanics but has no draft — with none
+   * supplied, review-authoring actions become no-ops.
+   */
+  draft?: UseReviewDraft
 }): ReviewSurfaceShell {
   const { files, annotationsByPath, model, selectedPath, codeViewRef, draft } = args
-  const pending = draft.pending
+  const pending = draft?.pending ?? null
 
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set())
   const toggleCollapsed = useCallback((path: string) => {
@@ -196,14 +198,14 @@ export function useReviewSurfaceShell(args: {
   const [codeMode, setCodeMode] = usePersistedBoolean('code-mode', true)
 
   const startReview = useCallback(() => {
-    draft.startReview()
+    draft?.startReview()
     setReviewPanelOpen(true)
     setCodeMode(true)
   }, [draft, setReviewPanelOpen, setCodeMode])
 
   const startDraft = useCallback(
     (spec: { path: string; anchor: AnchorSpec; inReplyToId?: number }) => {
-      draft.startDraft(spec)
+      draft?.startDraft(spec)
       setReviewPanelOpen(true)
     },
     [draft, setReviewPanelOpen]
@@ -261,10 +263,11 @@ export function useReviewSurfaceShell(args: {
 }
 
 /**
- * The tree + diff + review-panel layout. Identical structure across
- * both views; the differing pieces (gutter draft entry, annotation
- * rendering, empty state, and the review panel itself) come in as
- * props.
+ * The tree + diff + review-panel layout. Its only live consumer is the
+ * read-only Diff view; the authoring pieces (gutter draft entry, line
+ * selection, annotation rendering, and the review panel) are all gated
+ * behind the single `enableAuthoring` seam for when Line Comment
+ * authoring lands.
  */
 export function ReviewSurface({
   panesId,
@@ -276,7 +279,7 @@ export function ReviewSurface({
   codeViewRef,
   items,
   renderHeaderPrefix,
-  enableLineSelection = false,
+  enableAuthoring = false,
   onGutterDraft,
   renderAnnotation,
   emptyState,
@@ -292,9 +295,15 @@ export function ReviewSurface({
   codeViewRef: Ref<CodeViewHandle<AnnotationMeta>>
   items: CodeViewDiffItem<AnnotationMeta>[]
   renderHeaderPrefix: (item: { id: string }) => ReactNode
-  enableLineSelection?: boolean
-  onGutterDraft: (spec: { path: string; anchor: AnchorSpec }) => void
-  renderAnnotation: (ann: DiffLineAnnotation<AnnotationMeta>) => ReactNode
+  /**
+   * The one authoring on/off decision for the surface. When on, the
+   * gutter "+" utility, line selection, gutter-draft entry, and
+   * annotation rendering all turn on together; when off (read-only,
+   * the default), none of them render — no phantom "+" gutter.
+   */
+  enableAuthoring?: boolean
+  onGutterDraft?: (spec: { path: string; anchor: AnchorSpec }) => void
+  renderAnnotation?: (ann: DiffLineAnnotation<AnnotationMeta>) => ReactNode
   emptyState: ReactNode
   diffSectionRef: Ref<HTMLElement>
   reviewPanel?: ReactNode
@@ -319,16 +328,20 @@ export function ReviewSurface({
               className={CODE_VIEW_CLASS}
               items={items}
               renderHeaderPrefix={renderHeaderPrefix}
-              options={{
-                enableGutterUtility: true,
-                // Show the highlighted range while the user drags from
-                // the gutter +. Without this the drag-select still works
-                // data-wise, but there's no visual cue so it feels like
-                // dragging does nothing.
-                ...(enableLineSelection ? { enableLineSelection: true } : {}),
-                onGutterUtilityClick: (range, ctx) =>
-                  onGutterDraft({ path: ctx.item.id, anchor: specFromRange(range) })
-              }}
+              options={
+                enableAuthoring
+                  ? {
+                      enableGutterUtility: true,
+                      // Show the highlighted range while the user drags
+                      // from the gutter +. Without this the drag-select
+                      // still works data-wise, but there's no visual cue
+                      // so it feels like dragging does nothing.
+                      enableLineSelection: true,
+                      onGutterUtilityClick: (range, ctx) =>
+                        onGutterDraft?.({ path: ctx.item.id, anchor: specFromRange(range) })
+                    }
+                  : {}
+              }
               renderAnnotation={renderAnnotation}
             />
           ) : (

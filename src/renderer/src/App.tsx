@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
+import { DiffView } from './DiffView'
 import { Markdown } from './Markdown'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -32,7 +33,9 @@ const SHORTCUT_HELP: ShortcutHelp[] = [
   { keys: '?', description: 'Show / hide this help' },
   { keys: '1', description: 'Activity tab' },
   { keys: '2', description: 'Guide tab' },
-  { keys: '3', description: 'Diff tab' }
+  { keys: '3', description: 'Diff tab' },
+  { keys: '] / [', description: 'Diff: next / previous file' },
+  { keys: 'j / k', description: 'Diff: next / previous hunk' }
 ]
 
 export default function App() {
@@ -171,7 +174,7 @@ function Window({ target }: { target: PrTarget }) {
       </TitleBar>
       {tab === 'activity' && <ActivityView status={status} />}
       {tab === 'guide' && <GuidePlaceholder />}
-      {tab === 'diff' && <DiffPlaceholder />}
+      {tab === 'diff' && <DiffView target={target} />}
     </main>
   )
 }
@@ -316,10 +319,6 @@ function GuidePlaceholder() {
       The Guide will generate here — a scrollytelling walkthrough of the change.
     </CenteredNote>
   )
-}
-
-function DiffPlaceholder() {
-  return <CenteredNote>The full diff review will live here.</CenteredNote>
 }
 
 function CenteredNote({
