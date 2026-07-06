@@ -9,6 +9,7 @@ Homer is a local, reviewer-side macOS desktop app for reviewing someone else's G
 ## Prerequisites
 
 - **macOS** (Apple Silicon).
+- **[`bun`](https://bun.sh)** — Homer currently installs by building from source, so `bun` is required. `scripts/install.sh` runs `bun install` (pulling in `electron-vite`, `electron-builder`, etc.) and `bun run dist` for you, so `bun` is the only build tool you need to install yourself (network required on the first build). A prebuilt download is planned so this won't be needed later — see [Status](#status).
 - **[`gh`](https://cli.github.com) authenticated** — Homer delegates all GitHub auth and API calls to the `gh` CLI. Run `gh auth login` once.
 - **The [`claude`](https://claude.com/product/claude-code) CLI signed in on your Claude subscription** — Homer runs the review Agent on your existing subscription via your local `claude` CLI. **No API key is needed.** If `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) is set in your environment, Homer strips it from the Agent by default so the run bills your subscription rather than the API.
 

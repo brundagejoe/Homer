@@ -21,6 +21,11 @@ if ! command -v bun >/dev/null 2>&1; then
   exit 1
 fi
 
+# Install dependencies (electron-vite, electron-builder, etc.) so a fresh clone
+# needs only `bun` — no manual `bun install` first. Needs network on first run.
+echo "==> Installing dependencies (bun install)…"
+( cd "$REPO_DIR" && bun install )
+
 echo "==> Building Homer (bun run dist) — this can take a minute…"
 ( cd "$REPO_DIR" && bun run dist )
 
