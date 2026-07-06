@@ -163,19 +163,22 @@ export function PendingCommentEditor({
   onSubmit: () => void
   onCancel: () => void
 }) {
-  const containerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const isReply = comment.inReplyToId != null
   useEffect(() => {
     textareaRef.current?.focus()
   }, [])
-  // Click-outside-to-cancel.
+  // Click-outside-to-cancel. We test the LIVE DOM from the click target upward
+  // (`closest('[data-comment-editor]')`) rather than a captured container ref:
+  // Pierre re-renders annotations through its own DOM path, which re-creates the
+  // editor node and would leave a ref stale — making `ref.contains()` return
+  // false for a click on our OWN submit button and cancel the draft instead of
+  // committing it (the "comment vanishes on save" bug). A marker lookup on the
+  // live target is immune to that re-creation.
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      const root = containerRef.current
-      if (!root) return
-      const node = e.target as Node | null
-      if (node && root.contains(node)) return
+      const node = e.target as Element | null
+      if (node?.closest?.('[data-comment-editor]')) return
       onCancel()
     }
     const id = window.setTimeout(() => document.addEventListener('mousedown', onDown), 0)
@@ -188,7 +191,7 @@ export function PendingCommentEditor({
   const range = formatLineRange(comment.startLineNumber, comment.lineNumber)
   return (
     <div
-      ref={containerRef}
+      data-comment-editor
       className="border border-hairline-strong rounded-md bg-elevated px-2.5 py-2 mx-2 my-1 flex flex-col gap-2"
     >
       <div className="text-[11px] text-muted">

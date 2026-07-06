@@ -41,11 +41,14 @@ const CODE_VIEW_CLASS = 'max-h-[460px] overflow-auto'
 /**
  * The Guide column is narrow, so its diff panels render in Pierre's INLINE
  * (unified, single-column) view — split's old|new columns clip code off the
- * right with no usable scroll here. The Diff tab keeps split (it has full
- * width); this inline choice is Guide-only. Long lines still scroll
- * horizontally within the panel via Pierre's default `overflow: 'scroll'`.
+ * right. `overflow: 'wrap'` wraps long lines to the panel width instead of
+ * scrolling horizontally: it keeps everything in view in a narrative guide
+ * AND bounds the diff content to the visible width, so inline review-comment
+ * cards (rendered in Pierre's annotation slot) wrap instead of running off the
+ * right edge past the widest code line. The Diff tab keeps split + scroll (it
+ * has full width); this is Guide-only.
  */
-const GUIDE_DIFF_OPTIONS: FileDiffOptions<undefined> = { diffStyle: 'unified' }
+const GUIDE_DIFF_OPTIONS: FileDiffOptions<undefined> = { diffStyle: 'unified', overflow: 'wrap' }
 
 /**
  * Lines of context to keep on each side of a full-file reference's `lineRange`
@@ -231,6 +234,7 @@ function AuthoringDiffReference({
   const options = useMemo<FileDiffOptions<AnnotationMeta>>(
     () => ({
       diffStyle: 'unified',
+      overflow: 'wrap',
       enableGutterUtility: true,
       // Show the highlighted range while the user drags from the gutter +;
       // without it the drag-select works data-wise but gives no visual cue.
