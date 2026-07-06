@@ -1,14 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
-import { CodeView } from '@pierre/diffs/react'
-import { processFile } from '@pierre/diffs'
-import type { CodeViewItem } from '@pierre/diffs'
-import { Markdown } from './Markdown'
-import { Badge } from '@/components/ui/badge'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { PrTarget } from '../../preload'
 import type { CoverageMap } from '../../shared/guide-schema'
-import type { RenderableReference, RenderableSection } from '../../shared/guide-view'
+import type { RenderableSection } from '../../shared/guide-view'
+import { ScrollStory } from './ScrollStory'
 
 /**
  * The Guide's lifecycle from the renderer's point of view:
@@ -77,13 +73,12 @@ export function useGuide(target: PrTarget): GuideState & { retry: () => void } {
 }
 
 /**
- * The Guide View: renders the streamed Guide as a basic, static top-to-bottom
- * list of Sections — each is tight prose beside its Code References (changed
- * refs as a diff, unchanged context as full file text). Sections appear as they
- * stream in. Scrollytelling (sticky pinning + scroll progress) is a later slice;
- * this view intentionally does no scroll choreography. Generation state (and the
- * error/retry action) is owned by `useGuide` at the Window level so it runs from
- * launch; this component only presents it.
+ * The Guide View: presents the streamed Guide as a scrollytelling story. It owns
+ * only generation *state* — the empty/error gates and the trailing streaming /
+ * error / coverage footer — and hands the ordered Sections to `ScrollStory`,
+ * which quarantines every bit of scroll choreography (sticky pinning, column
+ * measurement, progress observation). This component touches no scroll math.
+ * Sections appear as they stream in; the story extends live.
  */
 export function GuideView({ guide, onRetry }: { guide: GuideState; onRetry: () => void }) {
   const { sections, status, error, coverage } = guide
@@ -100,28 +95,22 @@ export function GuideView({ guide, onRetry }: { guide: GuideState; onRetry: () =
     )
   }
 
-  const total = sections.length
-
-  return (
-    <section className="flex-1 min-h-0 overflow-auto bg-surface">
-      <div className="max-w-4xl mx-auto px-6 py-6 flex flex-col gap-8">
-        {sections.map(section => (
-          <SectionCard key={section.ordinal} section={section} total={total} status={status} />
-        ))}
-
-        {(status === 'generating' || status === 'streaming') && (
-          <p className="m-0 text-[12.5px] text-subtle italic">Generating more sections…</p>
-        )}
-        {status === 'error' && (
-          <div className="flex items-center gap-3 border-t border-hairline pt-4">
-            <p className="m-0 text-[12.5px] text-danger">Guide generation failed: {error}</p>
-            <RetryButton onRetry={onRetry} />
-          </div>
-        )}
-        {status === 'done' && coverage && <CoverageNote coverage={coverage} />}
-      </div>
-    </section>
+  const footer = (
+    <div className="flex flex-col gap-3">
+      {(status === 'generating' || status === 'streaming') && (
+        <p className="m-0 text-[12.5px] text-subtle italic">Generating more sections…</p>
+      )}
+      {status === 'error' && (
+        <div className="flex items-center gap-3 border-t border-hairline pt-4">
+          <p className="m-0 text-[12.5px] text-danger">Guide generation failed: {error}</p>
+          <RetryButton onRetry={onRetry} />
+        </div>
+      )}
+      {status === 'done' && coverage && <CoverageNote coverage={coverage} />}
+    </div>
   )
+
+  return <ScrollStory sections={sections} footer={footer} />
 }
 
 function RetryButton({ onRetry }: { onRetry: () => void }) {
@@ -129,76 +118,6 @@ function RetryButton({ onRetry }: { onRetry: () => void }) {
     <Button size="sm" onClick={onRetry}>
       Retry
     </Button>
-  )
-}
-
-/**
- * The progress indicator counts against sections streamed so far while
- * streaming, and against the final total once finalized — a soft `NN/NN`
- * ordinal, no scroll math.
- */
-function SectionCard({
-  section,
-  total,
-  status
-}: {
-  section: RenderableSection
-  total: number
-  status: GuideStatus
-}) {
-  const denominator = status === 'done' ? String(total).padStart(2, '0') : '··'
-  return (
-    <article className="flex flex-col gap-3">
-      <header className="flex items-baseline gap-2 pb-1 border-b border-hairline">
-        <span className="font-mono text-[11px] text-subtle tabular-nums">
-          {String(section.ordinal).padStart(2, '0')}/{denominator}
-        </span>
-        <h2 className="m-0 text-[16px] font-semibold leading-snug">{section.title}</h2>
-      </header>
-      <Markdown compact>{section.explanation}</Markdown>
-      <div className="flex flex-col gap-3">
-        {section.references.map((ref, i) => (
-          <ReferencePanel key={`${ref.path}-${i}`} reference={ref} />
-        ))}
-      </div>
-    </article>
-  )
-}
-
-/** One Code Reference: a labeled panel rendering changed code as a diff and
- *  unchanged context as a full file, both via Pierre. */
-function ReferencePanel({ reference }: { reference: RenderableReference }) {
-  const item = useMemo<CodeViewItem | null>(() => {
-    if (reference.renderMode === 'diff') {
-      const fileDiff = processFile(reference.content)
-      return fileDiff ? { id: reference.path, type: 'diff', fileDiff } : null
-    }
-    return {
-      id: reference.path,
-      type: 'file',
-      file: { name: reference.path, contents: reference.content }
-    }
-  }, [reference])
-
-  return (
-    <div className="border border-hairline rounded-lg overflow-hidden bg-elevated">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-hairline bg-sidebar">
-        <span className="font-mono text-[11.5px] text-fg truncate">{reference.path}</span>
-        <span className="text-[11px] text-subtle">
-          L{reference.lineRange.start}–{reference.lineRange.end}
-        </span>
-        <Badge tone={reference.renderMode === 'diff' ? 'purple' : 'neutral'} className="ml-auto">
-          {reference.renderMode === 'diff' ? 'changed · diff' : 'context · full'}
-        </Badge>
-      </div>
-      {item ? (
-        <CodeView className="max-h-[460px] overflow-auto" items={[item]} />
-      ) : (
-        <pre className="m-0 p-3 text-[12px] font-mono whitespace-pre-wrap text-danger">
-          Could not render {reference.path}
-        </pre>
-      )}
-    </div>
   )
 }
 
