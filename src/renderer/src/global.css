@@ -60,22 +60,28 @@
   color: var(--color-fg);
 }
 
+/* Dark mode. Override the @theme SOURCE tokens (--color-*), not just the legacy
+   --bg/--fg aliases: the Tailwind utility classes the whole UI is built from
+   (bg-surface, text-fg, bg-sidebar, border-hairline, …) resolve to `var(--color-*)`,
+   so flipping only the aliases left every utility-styled surface stuck on the
+   light palette — light-on-white, unreadable. The legacy aliases are themselves
+   `var(--color-*)`, so overriding the source flips both at once. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1e1e1e;
-    --bg-sidebar: #252525;
-    --bg-elevated: #2a2a2a;
-    --bg-hover: rgba(255, 255, 255, 0.06);
-    --bg-active: rgba(255, 255, 255, 0.1);
-    --bg-selected: rgba(10, 132, 255, 0.22);
-    --fg: rgba(255, 255, 255, 0.92);
-    --fg-secondary: rgba(255, 255, 255, 0.62);
-    --fg-tertiary: rgba(255, 255, 255, 0.42);
-    --hairline: rgba(255, 255, 255, 0.08);
-    --hairline-strong: rgba(255, 255, 255, 0.14);
-    --accent: #0a84ff;
-    --accent-hover: #2a94ff;
-    --accent-active: #006edc;
+    --color-surface: #1e1e1e;
+    --color-sidebar: #252525;
+    --color-elevated: #2a2a2a;
+    --color-hover: rgba(255, 255, 255, 0.06);
+    --color-active: rgba(255, 255, 255, 0.1);
+    --color-selected: rgba(10, 132, 255, 0.22);
+    --color-fg: rgba(255, 255, 255, 0.92);
+    --color-muted: rgba(255, 255, 255, 0.62);
+    --color-subtle: rgba(255, 255, 255, 0.42);
+    --color-hairline: rgba(255, 255, 255, 0.08);
+    --color-hairline-strong: rgba(255, 255, 255, 0.14);
+    --color-accent: #0a84ff;
+    --color-accent-hover: #2a94ff;
+    --color-accent-active: #006edc;
   }
 }
 
