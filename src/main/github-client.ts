@@ -107,6 +107,10 @@ export interface PullRequestDetails {
   state: 'open' | 'draft' | 'merged' | 'closed'
   baseRef: string
   headRef: string
+  /** The head commit SHA — the exact revision the PR Worktree is materialized at. */
+  headSha: string
+  /** The base commit SHA the PR merges into. */
+  baseSha: string
   url: string
   commentCount: number
   reviewCommentCount: number
@@ -163,6 +167,8 @@ export class GitHubClient {
       state,
       baseRef: data.base.ref,
       headRef: data.head.ref,
+      headSha: data.head.sha,
+      baseSha: data.base.sha,
       url: data.html_url,
       commentCount: data.comments,
       reviewCommentCount: data.review_comments,

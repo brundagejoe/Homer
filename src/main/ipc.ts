@@ -4,6 +4,7 @@ import { PendingReview, ReviewTarget } from './pending-review-store'
 import { toGitHubReview } from './review-formatter'
 import { AuthStatus } from './gh-auth-resolver'
 import { PullRequestDetails, InlineComment, ConversationComment } from './github-client'
+import { WindowGenerations } from './generation-registry'
 import {
   ghAuth,
   githubClient,
@@ -38,6 +39,13 @@ export interface FileWithPatch {
   patch: string
 }
 
+/**
+ * One in-flight Guide generation per window. Starting a new generation aborts
+ * the window's previous one (and closing the window aborts it), so navigating
+ * A→B never leaks the prior run or cross-contaminates the new Guide.
+ */
+const generations = new WindowGenerations()
+
 export function registerIpcHandlers(): void {
   ipcMain.handle(CHANNELS.reviewGet, (_e, target: ReviewTarget): PendingReview | null =>
     pendingReviewStore().get(target)
@@ -67,21 +75,41 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     CHANNELS.guideGenerate,
-    async (e, target: { owner: string; repo: string; number: number }): Promise<void> => {
+    async (
+      e,
+      args: { target: { owner: string; repo: string; number: number }; generationId: string }
+    ): Promise<void> => {
       // Stream Sections to the window that asked, as the Agent emits them. The
       // Guide is additive: a generation failure surfaces as a `guide:error`
       // event and never rejects the invoke or disturbs Activity/Diff.
       const sender = e.sender
+      const { target, generationId } = args
+
+      // The window-scoped owner aborts the window's previous run and wires
+      // teardown; the handler keeps no lifecycle state of its own.
+      const controller = generations.start(sender)
+      const signal = controller.signal
+
       try {
-        for await (const event of guideSource().generate(target)) {
-          if (sender.isDestroyed()) return
-          if (event.type === 'section') sender.send(CHANNELS.guideSectionEmitted, event.section)
-          else sender.send(CHANNELS.guideFinalized, event.coverage)
+        for await (const event of guideSource().generate(target, signal)) {
+          if (signal.aborted || sender.isDestroyed()) return
+          // Every event carries the generation id so the renderer can drop any
+          // late event from a superseded run (belt-and-suspenders with abort).
+          if (event.type === 'section') {
+            sender.send(CHANNELS.guideSectionEmitted, { generationId, section: event.section })
+          } else {
+            sender.send(CHANNELS.guideFinalized, { generationId, coverage: event.coverage })
+          }
         }
       } catch (err) {
-        if (!sender.isDestroyed()) {
-          sender.send(CHANNELS.guideError, { message: (err as Error).message ?? String(err) })
+        if (!signal.aborted && !sender.isDestroyed()) {
+          sender.send(CHANNELS.guideError, {
+            generationId,
+            message: (err as Error).message ?? String(err)
+          })
         }
+      } finally {
+        generations.finish(sender, controller)
       }
     }
   )

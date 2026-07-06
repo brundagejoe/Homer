@@ -97,6 +97,8 @@ describe('GitHubClient.getPR', () => {
       state: 'open',
       baseRef: 'main',
       headRef: 'feat/thing',
+      headSha: 'def',
+      baseSha: 'abc',
       url: 'https://github.com/o/r/pull/7',
       commentCount: 2,
       reviewCommentCount: 4,

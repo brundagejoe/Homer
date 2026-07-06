@@ -4,14 +4,23 @@ import { processFile } from '@pierre/diffs'
 import type { CodeViewItem } from '@pierre/diffs'
 import { Markdown } from './Markdown'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { PrTarget } from '../../preload'
 import type { CoverageMap } from '../../shared/guide-schema'
 import type { RenderableReference, RenderableSection } from '../../shared/guide-view'
 
-type GuideStatus = 'streaming' | 'done' | 'error'
+/**
+ * The Guide's lifecycle from the renderer's point of view:
+ *  - `generating`: started, nothing streamed yet ("by the time you've read the
+ *    description it's ready" — user story 4).
+ *  - `streaming`: Sections arriving; readable already.
+ *  - `done`: finalized, Coverage Map in hand.
+ *  - `error`: the Agent failed — keep whatever streamed and offer a retry.
+ */
+type GuideStatus = 'generating' | 'streaming' | 'done' | 'error'
 
-interface GuideState {
+export interface GuideState {
   sections: RenderableSection[]
   status: GuideStatus
   error?: string
@@ -19,43 +28,52 @@ interface GuideState {
 }
 
 /**
- * Subscribe to the streamed Guide for a PR and accumulate Sections as they
- * arrive. The renderer touches no generation internals: it starts generation,
- * collects `section-emitted` / `guide-finalized` / `error` events, and keeps
- * Sections ordered by ordinal. Generation is additive — an error leaves the
- * already-streamed Sections in place.
+ * Start generating the Guide and accumulate streamed Sections. Called once when
+ * the Window mounts — i.e. at launch, in the background, while the reviewer reads
+ * Activity — not gated on the Guide tab being open. The renderer touches no
+ * generation internals: it starts generation, collects the streamed events, and
+ * keeps Sections ordered. Generation is additive — an error leaves the
+ * already-streamed Sections in place and exposes `retry`.
  */
-function useStreamingGuide(target: PrTarget): GuideState {
-  const [state, setState] = useState<GuideState>({ sections: [], status: 'streaming' })
+export function useGuide(target: PrTarget): GuideState & { retry: () => void } {
+  const [nonce, setNonce] = useState(0)
+  const [state, setState] = useState<GuideState>({ sections: [], status: 'generating' })
 
   useEffect(() => {
-    setState({ sections: [], status: 'streaming' })
+    // A fresh token per run. Every streamed event echoes it back, so events from
+    // a superseded run (e.g. after navigating to another PR, or a retry) are
+    // dropped even if a late send races the effect teardown.
+    const generationId = crypto.randomUUID()
+    setState({ sections: [], status: 'generating' })
 
-    const offSection = window.api.onGuideSection(section => {
+    const offSection = window.api.onGuideSection(({ generationId: id, section }) => {
+      if (id !== generationId) return
       setState(prev => {
         const sections = [...prev.sections.filter(s => s.ordinal !== section.ordinal), section].sort(
           (a, b) => a.ordinal - b.ordinal
         )
-        return { ...prev, sections }
+        return { ...prev, sections, status: prev.status === 'done' ? 'done' : 'streaming' }
       })
     })
-    const offFinalized = window.api.onGuideFinalized(coverage => {
+    const offFinalized = window.api.onGuideFinalized(({ generationId: id, coverage }) => {
+      if (id !== generationId) return
       setState(prev => ({ ...prev, status: 'done', coverage }))
     })
-    const offError = window.api.onGuideError(err => {
-      setState(prev => ({ ...prev, status: 'error', error: err.message }))
+    const offError = window.api.onGuideError(({ generationId: id, message }) => {
+      if (id !== generationId) return
+      setState(prev => ({ ...prev, status: 'error', error: message }))
     })
 
-    window.api.startGuide(target)
+    window.api.startGuide(target, generationId)
 
     return () => {
       offSection()
       offFinalized()
       offError()
     }
-  }, [target.owner, target.repo, target.number])
+  }, [target.owner, target.repo, target.number, nonce])
 
-  return state
+  return { ...state, retry: () => setNonce(n => n + 1) }
 }
 
 /**
@@ -63,16 +81,23 @@ function useStreamingGuide(target: PrTarget): GuideState {
  * list of Sections — each is tight prose beside its Code References (changed
  * refs as a diff, unchanged context as full file text). Sections appear as they
  * stream in. Scrollytelling (sticky pinning + scroll progress) is a later slice;
- * this view intentionally does no scroll choreography.
+ * this view intentionally does no scroll choreography. Generation state (and the
+ * error/retry action) is owned by `useGuide` at the Window level so it runs from
+ * launch; this component only presents it.
  */
-export function GuideView({ target }: { target: PrTarget }) {
-  const { sections, status, error, coverage } = useStreamingGuide(target)
+export function GuideView({ guide, onRetry }: { guide: GuideState; onRetry: () => void }) {
+  const { sections, status, error, coverage } = guide
 
-  if (sections.length === 0 && status === 'streaming') {
+  if (sections.length === 0 && (status === 'generating' || status === 'streaming')) {
     return <CenteredNote>Generating the Guide…</CenteredNote>
   }
   if (sections.length === 0 && status === 'error') {
-    return <CenteredNote tone="danger">Guide generation failed: {error}</CenteredNote>
+    return (
+      <CenteredNote tone="danger">
+        <span>Guide generation failed: {error}</span>
+        <RetryButton onRetry={onRetry} />
+      </CenteredNote>
+    )
   }
 
   const total = sections.length
@@ -84,15 +109,26 @@ export function GuideView({ target }: { target: PrTarget }) {
           <SectionCard key={section.ordinal} section={section} total={total} status={status} />
         ))}
 
-        {status === 'streaming' && (
+        {(status === 'generating' || status === 'streaming') && (
           <p className="m-0 text-[12.5px] text-subtle italic">Generating more sections…</p>
         )}
         {status === 'error' && (
-          <p className="m-0 text-[12.5px] text-danger">Guide generation failed: {error}</p>
+          <div className="flex items-center gap-3 border-t border-hairline pt-4">
+            <p className="m-0 text-[12.5px] text-danger">Guide generation failed: {error}</p>
+            <RetryButton onRetry={onRetry} />
+          </div>
         )}
         {status === 'done' && coverage && <CoverageNote coverage={coverage} />}
       </div>
     </section>
+  )
+}
+
+function RetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <Button size="sm" onClick={onRetry}>
+      Retry
+    </Button>
   )
 }
 
@@ -190,14 +226,14 @@ function CoverageNote({ coverage }: { coverage: CoverageMap }) {
 function CenteredNote({ children, tone }: { children: React.ReactNode; tone?: 'danger' }) {
   return (
     <section className="flex-1 grid place-items-center px-6">
-      <p
+      <div
         className={cn(
-          'm-0 text-[13px] text-center',
+          'm-0 text-[13px] text-center flex flex-col items-center gap-3',
           tone === 'danger' ? 'text-danger' : 'text-subtle'
         )}
       >
         {children}
-      </p>
+      </div>
     </section>
   )
 }

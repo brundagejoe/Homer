@@ -7,6 +7,8 @@ import { GhAuthResolver } from './gh-auth-resolver'
 import { GitHubClient, OctokitLike } from './github-client'
 import { PrWorktreeManager } from './pr-worktree-manager'
 import { GuideSource, StubGuideSource } from './guide-source'
+import { AgentRunner } from './agent-runner'
+import { resolveAgentConfig, type McpBridgeSpec } from './agent-config'
 
 /**
  * Composition root for the main process: owns the app's long-lived services as
@@ -59,13 +61,40 @@ export function worktreeManager(): PrWorktreeManager {
   return worktreeManagerInstance
 }
 
+/**
+ * How `claude` should spawn the tool bridge (an MCP stdio server). We reuse the
+ * Electron binary as a Node runtime (`ELECTRON_RUN_AS_NODE=1`) to run the bundled
+ * bridge script, so there's no dependency on a separate `node` on PATH; the
+ * `DV_TOOL_BRIDGE` flag is what makes that script start the server.
+ */
+function toolBridgeSpec(): McpBridgeSpec {
+  return {
+    command: process.execPath,
+    args: [join(__dirname, 'agent-tool-bridge.js')],
+    env: { ELECTRON_RUN_AS_NODE: '1', DV_TOOL_BRIDGE: '1' }
+  }
+}
+
 let guideSourceInstance: GuideSource | null = null
 /**
- * The Guide generation seam. V1 is a stub Agent that drives the whole pipe with
- * canned Sections; the real `claude` subprocess (`AgentRunner`) replaces it here
- * behind the same `GuideSource` interface without any caller changing.
+ * The Guide generation seam. Default is the real `claude` Agent (`AgentRunner`),
+ * behind the same `GuideSource` interface the stub used — no caller changes.
+ * Set `DV_GUIDE_STUB=1` to fall back to the offline `StubGuideSource` for
+ * dev/tests without spending a subscription run.
  */
 export function guideSource(): GuideSource {
-  if (!guideSourceInstance) guideSourceInstance = new StubGuideSource()
+  if (guideSourceInstance) return guideSourceInstance
+  if (process.env.DV_GUIDE_STUB === '1') {
+    guideSourceInstance = new StubGuideSource()
+  } else {
+    guideSourceInstance = new AgentRunner({
+      worktrees: worktreeManager(),
+      github: githubClient,
+      // The app is launched from inside the PR's repo (`dv <pr-url>`), so the
+      // launch cwd is the source repo the worktree is materialized from.
+      repoPath: process.cwd(),
+      config: resolveAgentConfig(toolBridgeSpec())
+    })
+  }
   return guideSourceInstance
 }

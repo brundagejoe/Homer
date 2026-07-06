@@ -20,7 +20,12 @@ export interface GuideRequest {
  * interface.
  */
 export interface GuideSource {
-  generate(request: GuideRequest): AsyncIterable<GuideEvent>
+  /**
+   * Stream the Guide for a PR. The optional `signal` cancels an in-flight run:
+   * implementations must stop promptly and tear down any subprocess when it
+   * aborts, so navigating to another PR never leaks a generation.
+   */
+  generate(request: GuideRequest, signal?: AbortSignal): AsyncIterable<GuideEvent>
 }
 
 /** Resolves a validated Code Reference pointer to its displayable content. */
@@ -63,15 +68,17 @@ export class GuideToolHost {
 export class StubGuideSource implements GuideSource {
   constructor(private readonly stepDelayMs = 350) {}
 
-  async *generate(_request: GuideRequest): AsyncIterable<GuideEvent> {
+  async *generate(_request: GuideRequest, signal?: AbortSignal): AsyncIterable<GuideEvent> {
     const host = new GuideToolHost(cannedResolver)
 
     for (const payload of STUB_SECTION_PAYLOADS) {
+      if (signal?.aborted) return
       const section = await host.emitSection(payload)
       yield { type: 'section', section }
       if (this.stepDelayMs > 0) await delay(this.stepDelayMs)
     }
 
+    if (signal?.aborted) return
     yield { type: 'finalized', coverage: host.finalizeGuide(STUB_FINALIZE_PAYLOAD) }
   }
 }

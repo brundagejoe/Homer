@@ -3,7 +3,7 @@ import { ExternalLink } from 'lucide-react'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
 import { DiffView } from './DiffView'
-import { GuideView } from './GuideView'
+import { GuideView, useGuide } from './GuideView'
 import { Markdown } from './Markdown'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -129,6 +129,11 @@ function Window({ target }: { target: PrTarget }) {
   const [tab, setTab] = useState<Tab>('activity')
   const [status, setStatus] = useState<Status>({ type: 'loading' })
 
+  // Fire Guide generation at launch, in the background, so it streams in while
+  // the reviewer reads Activity — independent of the PR-details fetch and of
+  // which tab is open (the Agent is additive).
+  const guide = useGuide(target)
+
   useEffect(() => {
     let cancelled = false
     setStatus({ type: 'loading' })
@@ -174,7 +179,7 @@ function Window({ target }: { target: PrTarget }) {
         <HelpButton />
       </TitleBar>
       {tab === 'activity' && <ActivityView status={status} />}
-      {tab === 'guide' && <GuideView target={target} />}
+      {tab === 'guide' && <GuideView guide={guide} onRetry={guide.retry} />}
       {tab === 'diff' && <DiffView target={target} />}
     </main>
   )

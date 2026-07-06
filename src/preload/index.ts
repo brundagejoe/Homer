@@ -122,7 +122,17 @@ export interface PrTarget {
   number: number
 }
 
-export interface GuideError {
+/** Streamed Guide events carry the generation id so stale runs can be dropped. */
+export interface GuideSectionEvent {
+  generationId: string
+  section: RenderableSection
+}
+export interface GuideFinalizedEvent {
+  generationId: string
+  coverage: CoverageMap
+}
+export interface GuideErrorEvent {
+  generationId: string
   message: string
 }
 
@@ -150,24 +160,28 @@ const api = {
   worktreeClearCache: (): Promise<void> => ipcRenderer.invoke('worktree:clear'),
 
   /**
-   * Start generating the Guide for a PR. Sections then arrive via
-   * `onGuideSection`, completion via `onGuideFinalized`, and any failure via
-   * `onGuideError`. Additive: it never rejects — a generation failure surfaces
-   * as a `guide:error` event, leaving Activity and Diff untouched.
+   * Start generating the Guide for a PR under a caller-supplied `generationId`.
+   * Sections then arrive via `onGuideSection`, completion via `onGuideFinalized`,
+   * and any failure via `onGuideError` — each event echoes the `generationId` so
+   * the caller can ignore events from a superseded run. Additive: it never
+   * rejects — a generation failure surfaces as a `guide:error` event, leaving
+   * Activity and Diff untouched. Starting a new generation for the window aborts
+   * the previous one.
    */
-  startGuide: (t: PrTarget): Promise<void> => ipcRenderer.invoke('guide:generate', t),
-  onGuideSection: (cb: (section: RenderableSection) => void): (() => void) => {
-    const listener = (_e: unknown, section: RenderableSection): void => cb(section)
+  startGuide: (t: PrTarget, generationId: string): Promise<void> =>
+    ipcRenderer.invoke('guide:generate', { target: t, generationId }),
+  onGuideSection: (cb: (event: GuideSectionEvent) => void): (() => void) => {
+    const listener = (_e: unknown, event: GuideSectionEvent): void => cb(event)
     ipcRenderer.on('guide:section-emitted', listener)
     return () => ipcRenderer.removeListener('guide:section-emitted', listener)
   },
-  onGuideFinalized: (cb: (coverage: CoverageMap) => void): (() => void) => {
-    const listener = (_e: unknown, coverage: CoverageMap): void => cb(coverage)
+  onGuideFinalized: (cb: (event: GuideFinalizedEvent) => void): (() => void) => {
+    const listener = (_e: unknown, event: GuideFinalizedEvent): void => cb(event)
     ipcRenderer.on('guide:finalized', listener)
     return () => ipcRenderer.removeListener('guide:finalized', listener)
   },
-  onGuideError: (cb: (error: GuideError) => void): (() => void) => {
-    const listener = (_e: unknown, error: GuideError): void => cb(error)
+  onGuideError: (cb: (event: GuideErrorEvent) => void): (() => void) => {
+    const listener = (_e: unknown, event: GuideErrorEvent): void => cb(event)
     ipcRenderer.on('guide:error', listener)
     return () => ipcRenderer.removeListener('guide:error', listener)
   }

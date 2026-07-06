@@ -8,7 +8,12 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/main/index.ts') }
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // The tool bridge is spawned as its own Node process by `claude`
+          // (via --mcp-config), so it ships as a separate main-process entry.
+          'agent-tool-bridge': resolve(__dirname, 'src/main/agent-tool-bridge.ts')
+        }
       }
     }
   },

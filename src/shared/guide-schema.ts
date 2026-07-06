@@ -69,6 +69,66 @@ export interface CoverageMap {
   omitted: HunkRef[]
 }
 
+/**
+ * JSON Schemas for the two tool inputs — the canonical wire contract advertised
+ * to the Agent (via the MCP tool bridge). They live here, beside the validators
+ * that enforce the same contract, so the shape the Agent is told and the shape
+ * the app accepts can't drift: `agent-tool-bridge.ts` imports these rather than
+ * restating them. Keep each schema in lockstep with its `parse*` function below.
+ */
+
+const LINE_RANGE_JSON_SCHEMA = {
+  type: 'object',
+  properties: { start: { type: 'integer' }, end: { type: 'integer' } },
+  required: ['start', 'end']
+} as const
+
+const HUNK_JSON_SCHEMA = {
+  type: 'object',
+  properties: { path: { type: 'string' }, lineRange: LINE_RANGE_JSON_SCHEMA },
+  required: ['path', 'lineRange']
+} as const
+
+/** JSON Schema for an `emit_section` tool call's input. */
+export const EMIT_SECTION_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    ordinal: { type: 'integer', description: '1-based position of this Section.' },
+    title: { type: 'string' },
+    explanation: { type: 'string', description: 'Tight Markdown prose.' },
+    kind: { type: 'string', enum: ['code'] },
+    references: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          lineRange: LINE_RANGE_JSON_SCHEMA,
+          renderMode: {
+            type: 'string',
+            enum: ['diff', 'full'],
+            description: '"diff" for changed code, "full" for unchanged context.'
+          },
+          kind: { type: 'string', enum: ['code'] }
+        },
+        required: ['path', 'lineRange', 'renderMode', 'kind']
+      }
+    }
+  },
+  required: ['ordinal', 'title', 'explanation', 'kind', 'references']
+} as const
+
+/** JSON Schema for a `finalize_guide` tool call's input. */
+export const FINALIZE_GUIDE_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    narrated: { type: 'array', items: HUNK_JSON_SCHEMA },
+    omitted: { type: 'array', items: HUNK_JSON_SCHEMA }
+  },
+  required: ['narrated', 'omitted']
+} as const
+
 /** Raised when a tool-call payload violates the contract. */
 export class GuideContractError extends Error {
   constructor(message: string) {
