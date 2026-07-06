@@ -34,6 +34,12 @@ export interface PendingReview {
   target: ReviewTarget
   snapshot: DiffSnapshot
   lineComments: LineComment[]
+  /**
+   * Line Comments that no longer anchored cleanly after a Refresh re-snapshot
+   * (ADR 0001). Kept — never silently dropped — so the human-authored text is
+   * preserved and surfaced with a warning until the reviewer resolves each one.
+   */
+  orphanedComments?: LineComment[]
   summary: string
   /** The submit mode (approve / request-changes / comment). */
   event?: ReviewEvent

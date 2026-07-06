@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from '@/components/ui/toast'
 import { confirm } from '@/components/ui/alert-dialog'
-import type { DiffSnapshot, PendingReview, ReviewEvent, ReviewTarget } from '../../preload'
+import type { DiffSnapshot, LineComment, PendingReview, ReviewEvent, ReviewTarget } from '../../preload'
+import { reconcileComments } from '../../shared/comment-reconciliation'
 import {
   type AnchorSpec,
   type DraftAction,
@@ -13,6 +14,12 @@ import {
 } from './review-draft'
 
 export type { AnchorSpec, Editing }
+
+/** The survivor/orphan split a Refresh produced. */
+export interface RefreshResult {
+  carried: LineComment[]
+  orphaned: LineComment[]
+}
 
 export interface UseReviewDraft {
   pending: PendingReview | null
@@ -26,7 +33,15 @@ export interface UseReviewDraft {
   remove: (id: string) => void
   setSummary: (summary: string) => void
   setEvent: (event: ReviewEvent) => void
-  refresh: (snapshot: DiffSnapshot) => void
+  /**
+   * Re-snapshot after a Refresh. The single reconciliation site: it splits the
+   * Pending Review's Line Comments against the new snapshot (survivors carry,
+   * orphans are flagged), applies the split, and returns it for the caller to
+   * report. Returns empty arrays when there is no Pending Review to reconcile.
+   */
+  refresh: (snapshot: DiffSnapshot) => RefreshResult
+  /** Acknowledge (discard) one flagged orphan comment. */
+  dismissOrphan: (id: string) => void
   discard: () => void
   markSubmitted: () => void
 }
@@ -103,7 +118,25 @@ export function useReviewDraft(opts: {
     remove: id => dispatch({ type: 'removeComment', id, now: Date.now() }),
     setSummary: summary => dispatch({ type: 'setSummary', summary, now: Date.now() }),
     setEvent: event => dispatch({ type: 'setEvent', event, now: Date.now() }),
-    refresh: snapshot => dispatch({ type: 'refreshSnapshot', snapshot, now: Date.now() }),
+    refresh: snapshot => {
+      const pending = stateRef.current.pending
+      const result: RefreshResult = pending
+        ? reconcileComments({
+            comments: pending.lineComments,
+            oldSnapshot: pending.snapshot,
+            newSnapshot: snapshot
+          })
+        : { carried: [], orphaned: [] }
+      dispatch({
+        type: 'refreshSnapshot',
+        snapshot,
+        carried: result.carried,
+        orphaned: result.orphaned,
+        now: Date.now()
+      })
+      return result
+    },
+    dismissOrphan: id => dispatch({ type: 'dismissOrphan', id, now: Date.now() }),
     discard: () => dispatch({ type: 'discard' }),
     markSubmitted: () => dispatch({ type: 'submitted' })
   }

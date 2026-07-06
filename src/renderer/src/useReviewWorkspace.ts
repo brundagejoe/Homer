@@ -37,10 +37,26 @@ export interface ReviewWorkspace {
   submitting: boolean
   submit: () => Promise<void>
   discard: () => Promise<void>
+  /**
+   * Re-snapshot the diff at the PR's current head (part of Refresh, ADR 0001):
+   * re-fetch `base...head`, freeze a fresh Diff Snapshot, and re-anchor the
+   * Pending Review's Line Comments against it — survivors carry, orphans are
+   * flagged. Returns the survivor/orphan counts for a confirmation (both 0 when
+   * there is no Pending Review to reconcile).
+   */
+  refresh: () => Promise<{ carried: number; orphaned: number }>
 }
 
 const NO_FILES: DiffFile[] = []
 const NO_INLINE: InlineComment[] = []
+
+/** Freeze the loaded `base...head` files into a Diff Snapshot (ADR 0001). PR
+ *  patches carry no binary flag, so everything normalizes as a modified file. */
+function snapshotOf(files: DiffFile[]): DiffSnapshot {
+  return {
+    files: files.map(f => ({ ...f, status: 'modified' as const, isBinary: false, oldPath: undefined }))
+  }
+}
 
 export function useReviewWorkspace(target: PrTarget): ReviewWorkspace {
   const [diff, setDiff] = useState<DiffStatus>({ type: 'loading' })
@@ -70,17 +86,25 @@ export function useReviewWorkspace(target: PrTarget): ReviewWorkspace {
     [target.owner, target.repo, target.number]
   )
 
-  // A freshly-started Review freezes the diff it was drafted against (the
-  // Diff Snapshot, ADR 0001). PR patches carry no binary flag.
-  const buildSnapshot = useCallback(
-    (): DiffSnapshot => ({
-      files: files.map(f => ({ ...f, status: 'modified' as const, isBinary: false, oldPath: undefined }))
-    }),
-    [files]
-  )
+  const buildSnapshot = useCallback((): DiffSnapshot => snapshotOf(files), [files])
 
   const draft = useReviewDraft({ target: reviewTarget, buildSnapshot, defaultEvent: 'COMMENT' })
   const { submitting, submit, discard } = useReviewSubmit(draft)
+
+  const refresh = useCallback(async () => {
+    const [rawDiff, inline] = await Promise.all([
+      window.api.githubGetPRDiff(target),
+      window.api.githubGetPRInlineComments(target)
+    ])
+    const nextFiles = splitPatchByFile(rawDiff)
+    setDiff({ type: 'loaded', files: nextFiles, inline })
+
+    // The draft owns the single reconciliation site: it splits the Pending
+    // Review's comments against the fresh snapshot and returns the split, which
+    // we forward as counts for the confirmation.
+    const { carried, orphaned } = draft.refresh(snapshotOf(nextFiles))
+    return { carried: carried.length, orphaned: orphaned.length }
+  }, [target, draft])
 
   return {
     diff,
@@ -89,6 +113,7 @@ export function useReviewWorkspace(target: PrTarget): ReviewWorkspace {
     draft,
     submitting,
     submit,
-    discard
+    discard,
+    refresh
   }
 }

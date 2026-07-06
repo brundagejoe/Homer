@@ -61,6 +61,12 @@ export interface PendingReview {
   target: ReviewTarget
   snapshot: DiffSnapshot
   lineComments: LineComment[]
+  /**
+   * Line Comments that no longer anchored cleanly after a Refresh re-snapshot
+   * (ADR 0001). Kept — never silently dropped — so the human-authored text is
+   * preserved and surfaced with a warning until the reviewer resolves each one.
+   */
+  orphanedComments?: LineComment[]
   summary: string
   event?: ReviewEvent
   createdAt: number
@@ -83,6 +89,10 @@ export interface PullRequestDetails {
   state: 'open' | 'draft' | 'merged' | 'closed'
   baseRef: string
   headRef: string
+  /** The head commit SHA — the revision the session's Guide/Snapshot are built at. */
+  headSha: string
+  /** The base commit SHA the PR merges into. */
+  baseSha: string
   url: string
   commentCount: number
   reviewCommentCount: number
@@ -156,6 +166,13 @@ const api = {
     ipcRenderer.invoke('github:get-pr-inline-comments', t),
   githubGetPRConversation: (t: PrTarget): Promise<ConversationComment[]> =>
     ipcRenderer.invoke('github:get-pr-conversation', t),
+  /**
+   * How many commits the PR's `head` is ahead of `base` — used to report the
+   * new-commit count in the staleness banner (base = the session's head SHA,
+   * head = the PR's current head SHA).
+   */
+  githubCommitsAhead: (t: PrTarget, base: string, head: string): Promise<number> =>
+    ipcRenderer.invoke('github:commits-ahead', { ...t, base, head }),
   /** Manual "clear cached checkouts": remove all cached PR Worktrees. */
   worktreeClearCache: (): Promise<void> => ipcRenderer.invoke('worktree:clear'),
 

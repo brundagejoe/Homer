@@ -22,6 +22,7 @@ export const CHANNELS = {
   githubGetPRDiff: 'github:get-pr-diff',
   githubGetPRInlineComments: 'github:get-pr-inline-comments',
   githubGetPRConversation: 'github:get-pr-conversation',
+  githubCommitsAhead: 'github:commits-ahead',
   reviewSubmitToGithub: 'review:submit-to-github',
   worktreeClear: 'worktree:clear',
   guideGenerate: 'guide:generate',
@@ -160,6 +161,18 @@ export function registerIpcHandlers(): void {
       const client = await githubClient()
       if (!client) throw new Error('gh CLI is not authenticated')
       return client.getPRConversation(args.owner, args.repo, args.number)
+    }
+  )
+
+  ipcMain.handle(
+    CHANNELS.githubCommitsAhead,
+    async (
+      _e,
+      args: { owner: string; repo: string; base: string; head: string }
+    ): Promise<number> => {
+      const client = await githubClient()
+      if (!client) throw new Error('gh CLI is not authenticated')
+      return client.commitsAhead(args.owner, args.repo, args.base, args.head)
     }
   )
 }

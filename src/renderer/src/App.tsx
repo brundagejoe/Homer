@@ -1,20 +1,23 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ExternalLink } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ExternalLink, GitCommitHorizontal, RefreshCw, X } from 'lucide-react'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
 import { DiffView } from './DiffView'
 import { GuideView, useGuide } from './GuideView'
 import { useReviewWorkspace } from './useReviewWorkspace'
+import { usePrStaleness } from './usePrStaleness'
 import { Markdown } from './Markdown'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
+import { toast } from '@/components/ui/toast'
 import { TitleBar } from '@/components/TitleBar'
 import { cn } from '@/lib/utils'
 import type {
   AuthStatus,
   ConversationComment,
   InlineComment,
+  LineComment,
   NavRoute,
   PrTarget,
   PullRequestDetails
@@ -139,28 +142,82 @@ function Window({ target }: { target: PrTarget }) {
   // in either tab accumulate into one Review (CONTEXT.md; slice #29).
   const workspace = useReviewWorkspace(target)
 
+  // The head SHA this session's Guide, Diff Snapshot, and comments were built
+  // at — the anchor staleness is measured against. Seeded from the first PR
+  // load; re-anchored on Refresh so the banner clears.
+  const [sessionHeadSha, setSessionHeadSha] = useState<string | null>(null)
+  const staleness = usePrStaleness(target, sessionHeadSha)
+
+  const loadStatus = useCallback(
+    async (signal?: { cancelled: boolean }) => {
+      setStatus({ type: 'loading' })
+      // Inline review threads come from the shared workspace (fetched once there),
+      // so Activity doesn't re-fetch them at launch.
+      try {
+        const [pr, conversation] = await Promise.all([
+          window.api.githubGetPR(target),
+          window.api.githubGetPRConversation(target)
+        ])
+        if (signal?.cancelled) return
+        setStatus({ type: 'loaded', pr, conversation })
+        // Anchor the session to the head SHA seen at launch (only if unset;
+        // Refresh sets it explicitly).
+        setSessionHeadSha(prev => prev ?? pr.headSha)
+      } catch (err) {
+        if (!signal?.cancelled) setStatus({ type: 'error', message: (err as Error).message ?? String(err) })
+      }
+    },
+    [target]
+  )
+
   useEffect(() => {
-    let cancelled = false
-    setStatus({ type: 'loading' })
-    // Inline review threads come from the shared workspace (fetched once there),
-    // so Activity doesn't re-fetch them at launch.
-    Promise.all([window.api.githubGetPR(target), window.api.githubGetPRConversation(target)])
-      .then(([pr, conversation]) => {
-        if (!cancelled) setStatus({ type: 'loaded', pr, conversation })
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setStatus({ type: 'error', message: err.message ?? String(err) })
-      })
+    const signal = { cancelled: false }
+    void loadStatus(signal)
     return () => {
-      cancelled = true
+      signal.cancelled = true
     }
-  }, [target.owner, target.repo, target.number])
+  }, [loadStatus])
+
+  const [refreshing, setRefreshing] = useState(false)
+  const onRefresh = useCallback(async () => {
+    const newHead = staleness.latestHeadSha
+    if (!newHead || refreshing) return
+    setRefreshing(true)
+    try {
+      // Regenerate the Guide at the new head SHA (retry re-resolves the SHA in
+      // the main process, re-materializing the PR Worktree and — a cache miss on
+      // the new SHA — running a fresh generation; the old Guide stays cached).
+      guide.retry()
+      // Re-snapshot the diff and re-anchor the Pending Review's Line Comments.
+      const result = await workspace.refresh()
+      // Refresh Activity (title, head ref/sha, conversation).
+      await loadStatus()
+      // Re-anchor the session so the staleness banner clears.
+      setSessionHeadSha(newHead)
+      if (result.orphaned > 0) {
+        toast.info('Refreshed — some comments were orphaned', {
+          description: `${result.carried} comment${result.carried === 1 ? '' : 's'} carried over; ${result.orphaned} no longer anchor and are flagged below.`
+        })
+      } else {
+        toast.success('Refreshed to the latest commits')
+      }
+    } catch (err) {
+      toast.error('Refresh failed', {
+        description: (err as Error).message,
+        actionLabel: 'Retry',
+        onAction: onRefresh
+      })
+    } finally {
+      setRefreshing(false)
+    }
+  }, [staleness.latestHeadSha, refreshing, guide, workspace, loadStatus])
 
   useKeyboardShortcut({ key: '1', handler: () => setTab('activity') })
   useKeyboardShortcut({ key: '2', handler: () => setTab('guide') })
   useKeyboardShortcut({ key: '3', handler: () => setTab('diff') })
 
   const loaded = status.type === 'loaded' ? status : null
+  const orphans = workspace.draft.pending?.orphanedComments ?? []
 
   return (
     <main className="h-screen flex flex-col bg-surface">
@@ -181,6 +238,12 @@ function Window({ target }: { target: PrTarget }) {
         <GhAuthIndicator />
         <HelpButton />
       </TitleBar>
+      {staleness.stale && (
+        <StalenessBanner newCommits={staleness.newCommits} refreshing={refreshing} onRefresh={onRefresh} />
+      )}
+      {orphans.length > 0 && (
+        <OrphanedCommentsBanner comments={orphans} onDismiss={workspace.draft.dismissOrphan} />
+      )}
       {tab === 'activity' && <ActivityView status={status} inline={workspace.inline} />}
       {tab === 'guide' && (
         <GuideView
@@ -192,6 +255,91 @@ function Window({ target }: { target: PrTarget }) {
       )}
       {tab === 'diff' && <DiffView workspace={workspace} coverage={guide.coverage} />}
     </main>
+  )
+}
+
+/**
+ * Shown when the PR gains new commits mid-session. It offers the reviewer an
+ * explicit Refresh but changes nothing on its own — the Guide, diff, and
+ * comments stay exactly as they were until Refresh is clicked (ADR 0001: never
+ * a mid-session rug-pull).
+ */
+function StalenessBanner({
+  newCommits,
+  refreshing,
+  onRefresh
+}: {
+  newCommits: number | null
+  refreshing: boolean
+  onRefresh: () => void
+}) {
+  const label =
+    newCommits && newCommits > 0
+      ? `${newCommits} new commit${newCommits === 1 ? '' : 's'} on this PR`
+      : 'New commits on this PR'
+  return (
+    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-hairline bg-accent/10 text-[12px]">
+      <GitCommitHorizontal size={14} className="text-accent shrink-0" />
+      <span className="flex-1 text-fg">
+        {label}. Your Guide, diff, and comments are unchanged until you refresh.
+      </span>
+      <Tooltip content="Regenerate the Guide and re-snapshot the diff at the new head">
+        <Button variant="primary" size="sm" onClick={onRefresh} disabled={refreshing}>
+          <RefreshCw size={12} className={cn('mr-1', refreshing && 'animate-spin')} />
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </Button>
+      </Tooltip>
+    </div>
+  )
+}
+
+/**
+ * After a Refresh, Line Comments that no longer anchor to the new Diff Snapshot
+ * are surfaced here rather than silently dropped — the Pending Review is the one
+ * non-regenerable, human-authored state (ADR 0001). Each can be dismissed once
+ * the reviewer has re-read or re-filed it.
+ */
+function OrphanedCommentsBanner({
+  comments,
+  onDismiss
+}: {
+  comments: LineComment[]
+  onDismiss: (id: string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 px-3 py-2 border-b border-hairline bg-warning/10 text-[12px]">
+      <span className="font-medium text-fg">
+        {comments.length} comment{comments.length === 1 ? '' : 's'} no longer anchor after the refresh
+      </span>
+      <span className="text-subtle">
+        The code these were on changed or moved. They were kept, not submitted — review each, then
+        dismiss it.
+      </span>
+      <ul className="flex flex-col gap-1 mt-0.5">
+        {comments.map(c => (
+          <li
+            key={c.id}
+            className="flex items-start gap-2 border border-hairline rounded-md px-2 py-1 bg-elevated"
+          >
+            <span className="font-mono text-[11px] text-muted shrink-0">
+              {c.path}:{c.lineNumber}
+            </span>
+            <span className="flex-1 min-w-0 text-fg whitespace-pre-wrap break-words">
+              {c.body || <span className="italic text-subtle">(empty)</span>}
+            </span>
+            <Tooltip content="Dismiss this orphaned comment">
+              <button
+                onClick={() => onDismiss(c.id)}
+                aria-label="Dismiss orphaned comment"
+                className="shrink-0 text-subtle hover:text-fg p-0.5 rounded hover:bg-hover [-webkit-app-region:no-drag]"
+              >
+                <X size={12} strokeWidth={2.4} />
+              </button>
+            </Tooltip>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 

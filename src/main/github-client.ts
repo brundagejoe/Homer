@@ -85,6 +85,19 @@ export interface CreateReplyParams {
   body: string
 }
 
+export interface CompareCommitsParams {
+  owner: string
+  repo: string
+  /** GitHub's `base...head` basehead syntax. */
+  basehead: string
+}
+
+export interface CompareCommitsData {
+  ahead_by: number
+  behind_by: number
+  total_commits: number
+}
+
 export interface OctokitLike {
   pulls: {
     get(params: PullGetParams): Promise<{ data: PullResponseData | string }>
@@ -94,6 +107,9 @@ export interface OctokitLike {
   }
   issues: {
     listComments(params: ListIssueCommentsParams): Promise<{ data: IssueCommentData[] }>
+  }
+  repos: {
+    compareCommitsWithBasehead(params: CompareCommitsParams): Promise<{ data: CompareCommitsData }>
   }
 }
 
@@ -232,6 +248,21 @@ export class GitHubClient {
       })
     }
     return response.data
+  }
+
+  /**
+   * How many commits `head` is ahead of `base`. Used to report the new-commit
+   * count in the staleness banner when the PR gains commits mid-session — base
+   * is the head SHA the session was built at, head is the PR's current head SHA.
+   */
+  async commitsAhead(owner: string, repo: string, base: string, head: string): Promise<number> {
+    if (base === head) return 0
+    const response = await this.octokit.repos.compareCommitsWithBasehead({
+      owner,
+      repo,
+      basehead: `${base}...${head}`
+    })
+    return response.data.ahead_by
   }
 
   async getPRConversation(owner: string, repo: string, pull_number: number): Promise<ConversationComment[]> {

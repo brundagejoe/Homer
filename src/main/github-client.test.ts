@@ -18,6 +18,7 @@ interface MockOptions {
   createReviewResponse?: CreateReviewResponse
   capturedReviews?: CreateReviewParams[]
   capturedReplies?: CreateReplyParams[]
+  compareData?: { ahead_by: number; behind_by: number; total_commits: number }
 }
 
 function mockOctokit(opts: MockOptions = {}): { octokit: OctokitLike; calls: string[] } {
@@ -56,6 +57,12 @@ function mockOctokit(opts: MockOptions = {}): { octokit: OctokitLike; calls: str
       async listComments(params) {
         calls.push(`issues.listComments ${params.owner}/${params.repo}#${params.issue_number}`)
         return { data: opts.issueComments ?? [] }
+      }
+    },
+    repos: {
+      async compareCommitsWithBasehead(params) {
+        calls.push(`repos.compareCommitsWithBasehead ${params.owner}/${params.repo} ${params.basehead}`)
+        return { data: opts.compareData ?? { ahead_by: 0, behind_by: 0, total_commits: 0 } }
       }
     }
   }
@@ -276,5 +283,25 @@ describe('GitHubClient.getPRConversation', () => {
       { id: 1, body: 'lgtm', author: 'carol', createdAt: '2026-05-01T00:00:00Z' }
     ])
     expect(calls).toContain('issues.listComments o/r#7')
+  })
+})
+
+describe('GitHubClient.commitsAhead', () => {
+  test('returns ahead_by from a base...head compare', async () => {
+    const { octokit, calls } = mockOctokit({
+      compareData: { ahead_by: 3, behind_by: 0, total_commits: 3 }
+    })
+    const client = new GitHubClient(octokit)
+    const n = await client.commitsAhead('o', 'r', 'oldsha', 'newsha')
+    expect(n).toBe(3)
+    expect(calls).toContain('repos.compareCommitsWithBasehead o/r oldsha...newsha')
+  })
+
+  test('short-circuits to 0 without an API call when base equals head', async () => {
+    const { octokit, calls } = mockOctokit({})
+    const client = new GitHubClient(octokit)
+    const n = await client.commitsAhead('o', 'r', 'same', 'same')
+    expect(n).toBe(0)
+    expect(calls.some(c => c.startsWith('repos.compareCommitsWithBasehead'))).toBe(false)
   })
 })
