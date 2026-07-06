@@ -4,7 +4,7 @@ import { Markdown } from './Markdown'
 import { ReferencePanel } from './GuideReference'
 import { cn } from '@/lib/utils'
 import type { SectionKind } from '../../shared/guide-schema'
-import type { RenderableSection } from '../../shared/guide-view'
+import type { RenderableReference, RenderableSection } from '../../shared/guide-view'
 import { choosePinSide, resolveActiveOrdinal, formatProgress, type PinSide } from './scroll-story-layout'
 
 /**
@@ -22,12 +22,26 @@ import { choosePinSide, resolveActiveOrdinal, formatProgress, type PinSide } fro
  * (coverage note, "generating more…", error/retry) is rendered inside the
  * scroll flow after the last Section but is otherwise opaque to this module.
  */
+/**
+ * How a single Code Reference is rendered. Injected by the caller so
+ * ScrollStory owns only layout/pinning/progress and stays ignorant of what a
+ * reference panel does — the Guide tab passes an authoring-enabled renderer,
+ * a plain reader gets the read-only default.
+ */
+export type RenderReference = (reference: RenderableReference, key: string) => ReactNode
+
 export interface ScrollStoryProps {
   /** The Sections to narrate, already ordered by the caller. */
   sections: RenderableSection[]
   /** Presentational trailing content, rendered inside the scroll flow. */
   footer?: ReactNode
+  /** Renders each Section's Code References. Defaults to a read-only panel. */
+  renderReference?: RenderReference
 }
+
+const defaultRenderReference: RenderReference = (reference, key) => (
+  <ReferencePanel key={key} reference={reference} />
+)
 
 /**
  * Registry of per-`kind` Section renderers. V1 registers exactly one (`code`);
@@ -36,12 +50,12 @@ export interface ScrollStoryProps {
  */
 const SECTION_RENDERERS: Record<
   SectionKind,
-  (props: { section: RenderableSection }) => ReactElement
+  (props: { section: RenderableSection; renderReference: RenderReference }) => ReactElement
 > = {
   code: CodeSection
 }
 
-export function ScrollStory({ sections, footer }: ScrollStoryProps) {
+export function ScrollStory({ sections, footer, renderReference = defaultRenderReference }: ScrollStoryProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const firstOrdinal = sections[0]?.ordinal ?? 0
   const [active, setActive] = useState(firstOrdinal)
@@ -83,7 +97,7 @@ export function ScrollStory({ sections, footer }: ScrollStoryProps) {
             const Renderer = SECTION_RENDERERS[section.kind]
             return (
               <div key={section.ordinal} data-ordinal={section.ordinal}>
-                <Renderer section={section} />
+                <Renderer section={section} renderReference={renderReference} />
               </div>
             )
           })}
@@ -103,7 +117,13 @@ export function ScrollStory({ sections, footer }: ScrollStoryProps) {
  * `items-start` (never stretch) so a column's measured height is its content
  * height and the pin choice can't feed back into the measurement.
  */
-function CodeSection({ section }: { section: RenderableSection }) {
+function CodeSection({
+  section,
+  renderReference
+}: {
+  section: RenderableSection
+  renderReference: RenderReference
+}) {
   const proseRef = useRef<HTMLDivElement>(null)
   const codeRef = useRef<HTMLDivElement>(null)
   const [pin, setPin] = useState<PinSide>('prose')
@@ -135,9 +155,7 @@ function CodeSection({ section }: { section: RenderableSection }) {
         <Markdown compact>{section.explanation}</Markdown>
       </div>
       <div ref={codeRef} className={cn('flex-1 min-w-0 flex flex-col gap-3', pin === 'code' && stickyColumn)}>
-        {section.references.map((ref, i) => (
-          <ReferencePanel key={`${ref.path}-${i}`} reference={ref} />
-        ))}
+        {section.references.map((ref, i) => renderReference(ref, `${ref.path}-${i}`))}
       </div>
     </article>
   )

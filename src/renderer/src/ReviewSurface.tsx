@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { CodeView, type CodeViewHandle } from '@pierre/diffs/react'
 import { processFile } from '@pierre/diffs'
-import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs'
+import type { CodeViewDiffItem, CodeViewOptions, DiffLineAnnotation } from '@pierre/diffs'
 import { FileTree, type UseFileTreeResult } from '@pierre/trees/react'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { usePersistedBoolean } from './usePersistedBoolean'
@@ -63,7 +63,45 @@ export function specFromRange(range: {
   }
 }
 
-function buildCodeViewItems<T>(
+/**
+ * Clear a CodeView's drag-selection once no inline draft editor is open
+ * (i.e. the editing buffer has emptied after a commit or cancel). Shared
+ * by every authoring surface — the Diff tab and the Guide's diff-reference
+ * panels — so the blue gutter selection doesn't linger after a comment is
+ * added. Keyed on the surface's editing count so it fires on the 1→0 edge.
+ */
+export function useClearSelectionWhenIdle<T>(
+  ref: RefObject<CodeViewHandle<T> | null>,
+  editingCount: number
+): void {
+  useEffect(() => {
+    if (editingCount === 0) ref.current?.clearSelectedLines()
+  }, [editingCount, ref])
+}
+
+/**
+ * The Pierre CodeView options that turn a diff into a Line Comment authoring
+ * surface: the gutter "+" utility, the drag line-selection cue, and the
+ * gutter-click → start-a-draft wiring (normalizing the selected range into an
+ * AnchorSpec). This is the single home for the gutter→draft interaction —
+ * both the Diff tab's `ReviewSurface` and the Guide's diff-reference panels
+ * consume it, so a change to that interaction is made once.
+ */
+export function buildAuthoringOptions(
+  onGutterDraft: (spec: { path: string; anchor: AnchorSpec }) => void
+): CodeViewOptions<AnnotationMeta> {
+  return {
+    enableGutterUtility: true,
+    // Show the highlighted range while the user drags from the gutter +.
+    // Without this the drag-select still works data-wise, but there's no
+    // visual cue so it feels like dragging does nothing.
+    enableLineSelection: true,
+    onGutterUtilityClick: (range, ctx) =>
+      onGutterDraft({ path: ctx.item.id, anchor: specFromRange(range) })
+  }
+}
+
+export function buildCodeViewItems<T>(
   files: CodeFile[],
   annotationsFor?: Annotator<T>,
   collapsedPaths?: ReadonlySet<string>
@@ -327,18 +365,7 @@ export function ReviewSurface({
               items={items}
               renderHeaderPrefix={renderHeaderPrefix}
               options={
-                enableAuthoring
-                  ? {
-                      enableGutterUtility: true,
-                      // Show the highlighted range while the user drags
-                      // from the gutter +. Without this the drag-select
-                      // still works data-wise, but there's no visual cue
-                      // so it feels like dragging does nothing.
-                      enableLineSelection: true,
-                      onGutterUtilityClick: (range, ctx) =>
-                        onGutterDraft?.({ path: ctx.item.id, anchor: specFromRange(range) })
-                    }
-                  : {}
+                enableAuthoring && onGutterDraft ? buildAuthoringOptions(onGutterDraft) : {}
               }
               renderAnnotation={renderAnnotation}
             />

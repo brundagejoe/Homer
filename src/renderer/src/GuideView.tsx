@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { PrTarget } from '../../preload'
 import type { CoverageMap } from '../../shared/guide-schema'
 import type { RenderableSection } from '../../shared/guide-view'
-import { ScrollStory } from './ScrollStory'
+import { ScrollStory, type RenderReference } from './ScrollStory'
+import { GuideReferencePanel } from './GuideReference'
+import type { UseReviewDraft } from './useReviewDraft'
 
 /**
  * The Guide's lifecycle from the renderer's point of view:
@@ -80,8 +82,41 @@ export function useGuide(target: PrTarget): GuideState & { retry: () => void } {
  * measurement, progress observation). This component touches no scroll math.
  * Sections appear as they stream in; the story extends live.
  */
-export function GuideView({ guide, onRetry }: { guide: GuideState; onRetry: () => void }) {
+export function GuideView({
+  guide,
+  onRetry,
+  draft,
+  diffLoaded = false
+}: {
+  guide: GuideState
+  onRetry: () => void
+  /** The shared Pending Review draft. Enables changed-lines-only Line
+   *  Comment authoring on diff references; omit for a read-only Guide. */
+  draft?: UseReviewDraft
+  /** Whether the diff has loaded — authoring is gated on it (ADR 0001). */
+  diffLoaded?: boolean
+}) {
   const { sections, status, error, coverage } = guide
+
+  // Author into the shared draft on changed (diff) references once the diff has
+  // loaded; context (full) references and the pre-load window stay read-only
+  // (GuideReferencePanel enforces this via isGuideAuthoringEnabled). Without a
+  // draft, ScrollStory falls back to its read-only reference panel.
+  const renderReference = useMemo<RenderReference | undefined>(
+    () =>
+      draft
+        ? (reference, key) => (
+            <GuideReferencePanel
+              key={key}
+              reference={reference}
+              draft={draft}
+              startDraft={draft.startDraft}
+              diffLoaded={diffLoaded}
+            />
+          )
+        : undefined,
+    [draft, diffLoaded]
+  )
 
   if (sections.length === 0 && (status === 'generating' || status === 'streaming')) {
     return <CenteredNote>Generating the Guide…</CenteredNote>
@@ -110,7 +145,7 @@ export function GuideView({ guide, onRetry }: { guide: GuideState; onRetry: () =
     </div>
   )
 
-  return <ScrollStory sections={sections} footer={footer} />
+  return <ScrollStory sections={sections} footer={footer} renderReference={renderReference} />
 }
 
 function RetryButton({ onRetry }: { onRetry: () => void }) {

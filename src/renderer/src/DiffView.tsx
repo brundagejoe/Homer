@@ -2,106 +2,74 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CodeViewHandle } from '@pierre/diffs/react'
 import { processFile } from '@pierre/diffs'
 import { useFileTree, useFileTreeSelection } from '@pierre/trees/react'
-import { splitPatchByFile } from '../../shared/split-patch'
 import { findUnnarratedHunks, type DiffHunk } from '../../shared/coverage-mapper'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
-import { ReviewSurface, useReviewSurfaceShell } from './ReviewSurface'
-import { useReviewDraft, useReviewSubmit } from './useReviewDraft'
+import { ReviewSurface, useReviewSurfaceShell, useClearSelectionWhenIdle } from './ReviewSurface'
 import { buildAnnotationMap, type AnnotationMeta, type UnnarratedAnchor } from './diff-annotations'
 import { draftComments, makeReviewAnnotationRenderer, ReviewPanel } from './review-comments'
 import { buildHunkTargets, clampStep, firstHunkIndexForPath } from './diff-navigation'
+import type { DiffFile, ReviewWorkspace } from './useReviewWorkspace'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import { toast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 import type { CoverageMap } from '../../shared/guide-schema'
-import type { DiffSnapshot, InlineComment, PendingReview, PrTarget, ReviewTarget } from '../../preload'
-
-type DiffFile = { path: string; patch: string }
-
-type Status =
-  | { type: 'loading' }
-  | { type: 'loaded'; files: DiffFile[]; inline: InlineComment[] }
-  | { type: 'error'; message: string }
+import type { InlineComment, PendingReview } from '../../preload'
 
 /**
  * The Diff View: full GitHub-style review of the PR's `base...head` diff
- * (Pierre diffs + file tree). Independent of the Agent/Guide — it fetches
- * the diff itself and works offline or on a generation failure.
+ * (Pierre diffs + file tree). Independent of the Agent/Guide — the diff and
+ * the review draft are supplied by the shared workspace, so it works offline
+ * or on a generation failure.
  *
  * Authoring is ON here: draft anchored Line Comments from the gutter "+",
  * reply to existing threads, write an overall summary, and submit one
  * batched Review to the GitHub PR as approve / request-changes / comment.
- * Comments accumulate into a durable Pending Review (SQLite) that survives
- * app restart. The comment presentation, annotation dispatch, and review
- * panel come from the shared `review-comments` kit; this view is the diff-
- * specific wiring (fetch, file tree, hunk/file keyboard nav).
+ * Comments accumulate into a durable Pending Review (SQLite) — the SAME one
+ * the Guide tab authors into (slice #29) — via the shared draft. The comment
+ * presentation, annotation dispatch, and review panel come from the shared
+ * `review-comments` kit; this view is the diff-specific wiring (file tree,
+ * hunk/file keyboard nav) plus the required Diff-pass finalize gate.
  */
-export function DiffView({ target, coverage }: { target: PrTarget; coverage?: CoverageMap }) {
-  const [status, setStatus] = useState<Status>({ type: 'loading' })
-
-  useEffect(() => {
-    let cancelled = false
-    setStatus({ type: 'loading' })
-    Promise.all([window.api.githubGetPRDiff(target), window.api.githubGetPRInlineComments(target)])
-      .then(([rawDiff, inline]) => {
-        if (!cancelled) setStatus({ type: 'loaded', files: splitPatchByFile(rawDiff), inline })
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setStatus({ type: 'error', message: err.message ?? String(err) })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [target.owner, target.repo, target.number])
-
-  if (status.type === 'loading') {
+export function DiffView({
+  workspace,
+  coverage
+}: {
+  workspace: ReviewWorkspace
+  coverage?: CoverageMap
+}) {
+  const { diff } = workspace
+  if (diff.type === 'loading') {
     return <CenteredNote>Loading diff…</CenteredNote>
   }
-  if (status.type === 'error') {
-    return <CenteredNote tone="danger">Failed to load diff: {status.message}</CenteredNote>
+  if (diff.type === 'error') {
+    return <CenteredNote tone="danger">Failed to load diff: {diff.message}</CenteredNote>
   }
-  if (status.files.length === 0) {
+  if (diff.files.length === 0) {
     return <CenteredNote>This pull request has no file changes.</CenteredNote>
   }
-  return <DiffLoaded target={target} files={status.files} inline={status.inline} coverage={coverage} />
+  return <DiffLoaded workspace={workspace} files={diff.files} inline={diff.inline} coverage={coverage} />
 }
 
 function DiffLoaded({
-  target,
+  workspace,
   files,
   inline,
   coverage
 }: {
-  target: PrTarget
+  workspace: ReviewWorkspace
   files: DiffFile[]
   inline: InlineComment[]
   coverage?: CoverageMap
 }) {
   const codeViewRef = useRef<CodeViewHandle<AnnotationMeta>>(null)
 
-  const reviewTarget: ReviewTarget = useMemo(
-    () => ({ owner: target.owner, repo: target.repo, number: target.number }),
-    [target.owner, target.repo, target.number]
-  )
-
-  // A freshly-started Review freezes the diff it was drafted against (the
-  // Diff Snapshot, ADR 0001). PR patches carry no binary flag.
-  const buildSnapshot = useCallback(
-    (): DiffSnapshot => ({
-      files: files.map(f => ({ ...f, status: 'modified' as const, isBinary: false, oldPath: undefined }))
-    }),
-    [files]
-  )
-
-  const draft = useReviewDraft({
-    target: reviewTarget,
-    buildSnapshot,
-    defaultEvent: 'COMMENT',
-    onAfterCommit: () => codeViewRef.current?.clearSelectedLines()
-  })
+  const { draft, submitting, submit, discard } = workspace
   const { pending, editing: editingComments } = draft
-  const { submitting, submit, discard } = useReviewSubmit(draft)
+
+  // Clear the gutter drag-selection once the inline editor closes (commit or
+  // cancel) — the shared behaviour the Guide's diff panels use too.
+  useClearSelectionWhenIdle(codeViewRef, editingComments.size)
 
   // The Review cannot be finalized until the reviewer completes the Diff
   // pass — the required completeness leg (advancing past the last Guide

@@ -4,6 +4,7 @@ import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
 import { DiffView } from './DiffView'
 import { GuideView, useGuide } from './GuideView'
+import { useReviewWorkspace } from './useReviewWorkspace'
 import { Markdown } from './Markdown'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -114,7 +115,6 @@ type Status =
   | {
       type: 'loaded'
       pr: PullRequestDetails
-      inline: InlineComment[]
       conversation: ConversationComment[]
     }
   | { type: 'error'; message: string }
@@ -134,16 +134,19 @@ function Window({ target }: { target: PrTarget }) {
   // which tab is open (the Agent is additive).
   const guide = useGuide(target)
 
+  // The single Pending Review draft shared by the Guide and Diff tabs, plus
+  // the diff it freezes as its snapshot. Lifted here so Line Comments authored
+  // in either tab accumulate into one Review (CONTEXT.md; slice #29).
+  const workspace = useReviewWorkspace(target)
+
   useEffect(() => {
     let cancelled = false
     setStatus({ type: 'loading' })
-    Promise.all([
-      window.api.githubGetPR(target),
-      window.api.githubGetPRInlineComments(target),
-      window.api.githubGetPRConversation(target)
-    ])
-      .then(([pr, inline, conversation]) => {
-        if (!cancelled) setStatus({ type: 'loaded', pr, inline, conversation })
+    // Inline review threads come from the shared workspace (fetched once there),
+    // so Activity doesn't re-fetch them at launch.
+    Promise.all([window.api.githubGetPR(target), window.api.githubGetPRConversation(target)])
+      .then(([pr, conversation]) => {
+        if (!cancelled) setStatus({ type: 'loaded', pr, conversation })
       })
       .catch((err: Error) => {
         if (!cancelled) setStatus({ type: 'error', message: err.message ?? String(err) })
@@ -178,9 +181,16 @@ function Window({ target }: { target: PrTarget }) {
         <GhAuthIndicator />
         <HelpButton />
       </TitleBar>
-      {tab === 'activity' && <ActivityView status={status} />}
-      {tab === 'guide' && <GuideView guide={guide} onRetry={guide.retry} />}
-      {tab === 'diff' && <DiffView target={target} coverage={guide.coverage} />}
+      {tab === 'activity' && <ActivityView status={status} inline={workspace.inline} />}
+      {tab === 'guide' && (
+        <GuideView
+          guide={guide}
+          onRetry={guide.retry}
+          draft={workspace.draft}
+          diffLoaded={workspace.diffLoaded}
+        />
+      )}
+      {tab === 'diff' && <DiffView workspace={workspace} coverage={guide.coverage} />}
     </main>
   )
 }
@@ -208,14 +218,14 @@ function TabBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
   )
 }
 
-function ActivityView({ status }: { status: Status }) {
+function ActivityView({ status, inline }: { status: Status; inline: InlineComment[] }) {
   if (status.type === 'loading') {
     return <CenteredNote>Loading pull request…</CenteredNote>
   }
   if (status.type === 'error') {
     return <CenteredNote tone="danger">Failed to load: {status.message}</CenteredNote>
   }
-  return <ActivityLoaded pr={status.pr} inline={status.inline} conversation={status.conversation} />
+  return <ActivityLoaded pr={status.pr} inline={inline} conversation={status.conversation} />
 }
 
 /**

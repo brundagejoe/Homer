@@ -39,18 +39,17 @@ export interface UseReviewDraft {
  * instead of each carrying a copy.
  *
  * `buildSnapshot` decides what a freshly-started review freezes as its
- * Diff Snapshot (ADR 0001) — the Diff tab normalizes its `base...head`
- * files. `defaultEvent` seeds the review's GitHub submit event.
- * `onAfterCommit` lets the view clear its gutter selection once a comment
- * is committed or cancelled.
+ * Diff Snapshot (ADR 0001) — the shared workspace normalizes its
+ * `base...head` files. `defaultEvent` seeds the review's GitHub submit
+ * event. (Gutter-selection clearing is a per-surface concern, handled by
+ * `useClearSelectionWhenIdle`, so it is not a draft-machine responsibility.)
  */
 export function useReviewDraft(opts: {
   target: ReviewTarget
   buildSnapshot: () => DiffSnapshot
   defaultEvent?: ReviewEvent
-  onAfterCommit?: () => void
 }): UseReviewDraft {
-  const { target, buildSnapshot, defaultEvent, onAfterCommit } = opts
+  const { target, buildSnapshot, defaultEvent } = opts
 
   const [state, setState] = useState<DraftState>(() => initialDraftState(target))
   const stateRef = useRef(state)
@@ -61,8 +60,6 @@ export function useReviewDraft(opts: {
   snapshotRef.current = buildSnapshot
   const eventRef = useRef(defaultEvent)
   eventRef.current = defaultEvent
-  const afterCommitRef = useRef(onAfterCommit)
-  afterCommitRef.current = onAfterCommit
 
   const dispatch = useCallback((action: DraftAction) => {
     const [next, effect] = reviewDraftReducer(stateRef.current, action)
@@ -94,20 +91,15 @@ export function useReviewDraft(opts: {
     startDraft: spec => dispatch({ type: 'addDraft', comment: buildComment(crypto.randomUUID(), spec) }),
     startEdit: id => dispatch({ type: 'editComment', id }),
     updateBody: (id, body) => dispatch({ type: 'changeBody', id, body }),
-    commit: id => {
+    commit: id =>
       dispatch({
         type: 'commitComment',
         id,
         snapshot: snapshotRef.current(),
         event: eventRef.current,
         now: Date.now()
-      })
-      afterCommitRef.current?.()
-    },
-    cancel: id => {
-      dispatch({ type: 'cancelComment', id })
-      afterCommitRef.current?.()
-    },
+      }),
+    cancel: id => dispatch({ type: 'cancelComment', id }),
     remove: id => dispatch({ type: 'removeComment', id, now: Date.now() }),
     setSummary: summary => dispatch({ type: 'setSummary', summary, now: Date.now() }),
     setEvent: event => dispatch({ type: 'setEvent', event, now: Date.now() }),
