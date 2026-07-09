@@ -19,10 +19,6 @@ const prTarget = prFlag
     })()
   : null
 
-/** In-window navigation events pushed by the main process (a second
- *  `homer <pr-url>` invocation focuses this window and points it at that PR). */
-export type NavRoute = { kind: 'pr'; target: { owner: string; repo: string; number: number } }
-
 export type FileStatus = 'added' | 'modified' | 'deleted' | 'renamed'
 
 export interface FileWithPatch {
@@ -164,12 +160,12 @@ export interface GuideSettings {
 }
 
 const api = {
+  /**
+   * The PR this window was launched for. Fixed for the window's lifetime — each
+   * PR gets its own window (ADR 0005), so a window never switches PRs in place.
+   * Null when launched without a PR URL (the "paste a PR URL" state).
+   */
   prTarget,
-  onNavigate: (cb: (route: NavRoute) => void): (() => void) => {
-    const listener = (_e: unknown, route: NavRoute): void => cb(route)
-    ipcRenderer.on('app:navigate', listener)
-    return () => ipcRenderer.removeListener('app:navigate', listener)
-  },
   reviewGet: (target: ReviewTarget): Promise<PendingReview | null> =>
     ipcRenderer.invoke('review:get', target),
   reviewUpsert: (review: PendingReview): Promise<void> => ipcRenderer.invoke('review:upsert', review),

@@ -11,9 +11,10 @@ export interface WindowState {
 const DEFAULTS: WindowState = { width: 1200, height: 800 }
 
 /**
- * Single-file JSON store for the last-known window bounds. One global
- * record across all window purposes — the user resizes once and every
- * window thereafter opens at that size.
+ * Single-file JSON store for the last-known window bounds. One global record —
+ * the user resizes once and every window thereafter opens at that size. With
+ * multiple windows open (ADR 0005) each new one cascades down-right from this
+ * saved position so they don't stack exactly on top of one another.
  */
 export class WindowStateStore {
   private state: WindowState

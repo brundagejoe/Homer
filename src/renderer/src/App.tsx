@@ -19,14 +19,13 @@ import type {
   ConversationComment,
   InlineComment,
   LineComment,
-  NavRoute,
   PrTarget,
   PullRequestDetails
 } from '../../preload'
 
 const HELP_EVENT = 'dv:show-help'
 
-/** The three tab Views the single Window navigates between (ADR 0003). */
+/** The three tab Views a PR's Window navigates between (ADR 0003, 0005). */
 type Tab = 'activity' | 'guide' | 'diff'
 
 const TABS: { id: Tab; label: string; shortcut: string }[] = [
@@ -48,9 +47,9 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false)
   // `window.api` is undefined only in a broken preload; guard before use.
   const hasApi = !!window.api
-  const [target, setTarget] = useState<PrTarget | null>(() =>
-    hasApi ? window.api.prTarget : null
-  )
+  // The PR is fixed for this window's lifetime — each PR gets its own window
+  // (ADR 0005), so there's no in-place PR switching to track.
+  const target: PrTarget | null = hasApi ? window.api.prTarget : null
 
   useKeyboardShortcut({ key: '?', handler: () => setHelpOpen(o => !o) })
 
@@ -58,12 +57,6 @@ export default function App() {
     const onShow = () => setHelpOpen(true)
     window.addEventListener(HELP_EVENT, onShow)
     return () => window.removeEventListener(HELP_EVENT, onShow)
-  }, [])
-
-  // A second `homer <pr-url>` focuses this window and points it at that PR.
-  useEffect(() => {
-    if (!window.api?.onNavigate) return
-    return window.api.onNavigate((r: NavRoute) => setTarget(r.target))
   }, [])
 
   if (!hasApi) {
@@ -125,7 +118,7 @@ type Status =
   | { type: 'error'; message: string }
 
 /**
- * The single Window for one PR: a title bar with the three-tab switcher
+ * The Window for one PR: a title bar with the three-tab switcher
  * (Activity · Guide · Diff), landing on Activity with free navigation.
  * Activity renders the real PR; Guide and Diff are placeholders in this
  * slice (they never depend on Activity's data — the Agent is additive).

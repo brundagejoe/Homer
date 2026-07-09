@@ -109,15 +109,20 @@ export function settingsStore(): SettingsStore {
 
 /**
  * Resolve the source repo the PR Worktree is materialized from, for one PR — the
- * composition wrapper that gathers the launch context (`--repo=` → `DV_REPO` →
- * cwd) and the configured repo roots, then applies the resolution policy in
- * `resolveRepoForTarget` (verified match wins; launch context is a last resort;
- * else `RepoNotFoundError`).
+ * composition wrapper that gathers the launch context and the configured repo
+ * roots, then applies the resolution policy in `resolveRepoForTarget` (verified
+ * match wins; launch context is a last resort; else `RepoNotFoundError`).
+ *
+ * The launch context is the *requesting window's* — `request.launchContext`,
+ * captured per window at launch — so each window resolves against the repo it
+ * was opened from (multi-window). It falls back to the main process's argv only
+ * for callers with no window context (`DV_REPO` scripting, tests).
  */
 export async function resolveSourceRepo(request: GuideRequest): Promise<string> {
   return resolveRepoForTarget({
     target: { owner: request.owner, repo: request.repo },
-    launchContext: resolveRepoPath(process.argv, process.env, process.cwd()),
+    launchContext:
+      request.launchContext ?? resolveRepoPath(process.argv, process.env, process.cwd()),
     roots: settingsStore().getRepoRoots()
   })
 }

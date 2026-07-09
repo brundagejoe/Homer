@@ -17,6 +17,15 @@ export interface GuideRequest {
    * disagree about which SHA the Guide is for.
    */
   headSha: string
+  /**
+   * The launch repo context of the window that requested this Guide — the
+   * `homer` invocation's cwd / `--repo=`. Used as the "verify this clone is the
+   * PR's repo" hint before falling back to repo-roots discovery, so two windows
+   * launched from different repos each generate against their own (multi-window).
+   * Absent for callers with no window context (tests); resolution then falls
+   * back to the main process's argv.
+   */
+  launchContext?: string
 }
 
 /**

@@ -1,5 +1,10 @@
 # Single window with in-app navigation
 
+> **Amended by ADR 0005 (one window per PR).** The multi-monitor case this ADR
+> accepted as a cost was later revisited: Homer now opens one window per PR
+> (with dedup), layered on top of the in-app tab navigation described here — the
+> "explicit open in new window" path this ADR pointed to as the cleaner answer.
+
 The app owns exactly one window. Inside it you navigate between three
 surfaces — the **PR Inbox**, a **PR Review**, and **Local Mode** (a
 repo's working changes) — with an "‹ Inbox" back button and, from the

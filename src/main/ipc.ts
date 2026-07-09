@@ -6,6 +6,7 @@ import { toGitHubReview } from './review-formatter'
 import { AuthStatus } from './gh-auth-resolver'
 import { PullRequestDetails, InlineComment, ConversationComment } from './github-client'
 import { WindowGenerations } from './generation-registry'
+import { windowRepoContext } from './window-repo-context'
 import { DEFAULT_GUIDE_GUIDANCE } from './agent-prompt'
 import {
   ghAuth,
@@ -166,7 +167,15 @@ export function registerIpcHandlers(): void {
           : ''
         if (signal.aborted || sender.isDestroyed()) return
 
-        for await (const event of guideSource().generate({ ...target, headSha }, signal)) {
+        // Resolve the PR's source repo against THIS window's launch context, so
+        // two windows opened from different repos each generate against their
+        // own (falls back to the main process's argv when unset).
+        const launchContext = windowRepoContext.get(sender.id)
+
+        for await (const event of guideSource().generate(
+          { ...target, headSha, launchContext },
+          signal
+        )) {
           if (signal.aborted || sender.isDestroyed()) return
           // Every event carries the generation id so the renderer can drop any
           // late event from a superseded run (belt-and-suspenders with abort).

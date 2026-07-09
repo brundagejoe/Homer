@@ -32,6 +32,21 @@ describe('buildLaunchArgs / parsePrFlag', () => {
     expect(buildLaunchArgs(null)).toEqual([])
     expect(parsePrFlag([ELECTRON, APP])).toBeNull()
   })
+
+  it('appends the window repo context as --repo= when provided', () => {
+    const target = { owner: 'acme', repo: 'widgets', number: 42 }
+    const args = buildLaunchArgs(target, '/Users/me/widgets')
+    // The PR flag still round-trips, and the repo path rides alongside it so the
+    // window carries its own launch context (multi-window).
+    expect(parsePrFlag(args)).toEqual(target)
+    expect(resolveRepoPath(args, {}, '/')).toBe('/Users/me/widgets')
+  })
+
+  it('carries the repo context even for a no-PR window', () => {
+    const args = buildLaunchArgs(null, '/Users/me/widgets')
+    expect(parsePrFlag(args)).toBeNull()
+    expect(resolveRepoPath(args, {}, '/')).toBe('/Users/me/widgets')
+  })
 })
 
 describe('resolveRepoPath', () => {

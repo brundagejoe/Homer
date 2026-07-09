@@ -1,9 +1,9 @@
 #!/bin/sh
 # homer — launch Homer for a GitHub pull request.
 #   homer https://github.com/owner/repo/pull/N   → review that PR
-# Opens a single window with three tabs (Activity · Guide · Diff),
-# landing on Activity. A second `homer <pr-url>` while a window is open
-# focuses it and points it at that PR.
+# Opens a window with three tabs (Activity · Guide · Diff), landing on
+# Activity. Each PR gets its own window: a second `homer <pr-url>` opens a
+# new window for that PR, or focuses its window if that PR is already open.
 #
 # This is the DEV path: it runs Electron against this repo's built `out/`.
 # The global-install path (packaged .app + a `homer` on PATH that launches

@@ -9,9 +9,9 @@
 # so this shim captures your current directory and passes it as `--repo=`
 # alongside the PR URL. Run `homer` from inside the repo the PR belongs to.
 #
-# A second `homer <pr-url>` while Homer is already open focuses the window and
-# points it at the new PR (the repo of an already-open window is not switched —
-# quit Homer first to review a PR in a different repo).
+# Each PR opens in its own window (ADR 0005), each carrying its own repo context,
+# so you can review PRs from different repos side by side. A second `homer` for a
+# PR that's already open focuses that PR's window instead of opening a duplicate.
 #
 # Installed by scripts/install.sh. The in-repo dev launcher is bin/homer.
 set -e

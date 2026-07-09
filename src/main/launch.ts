@@ -24,9 +24,17 @@ export function resolveLaunchTarget(argv: string[]): PrTarget | null {
   return null
 }
 
-/** Encode a resolved target as renderer launch args (a single `--pr=` flag). */
-export function buildLaunchArgs(target: PrTarget | null): string[] {
-  return target ? [`${PR_FLAG}${target.owner}/${target.repo}/${target.number}`] : []
+/**
+ * Encode a launch as the window's renderer args: a `--pr=` flag for the target
+ * (omitted when there's none — the window shows the "paste a PR URL" state) and,
+ * when known, the `--repo=` launch context. Each window carries its own repo
+ * context so per-window Guide generation resolves the PR against the repo *that
+ * window* was launched from, not the main process's argv (multi-window).
+ */
+export function buildLaunchArgs(target: PrTarget | null, repoPath?: string): string[] {
+  const args = target ? [`${PR_FLAG}${target.owner}/${target.repo}/${target.number}`] : []
+  if (repoPath) args.push(`${REPO_FLAG}${repoPath}`)
+  return args
 }
 
 /**
@@ -39,10 +47,10 @@ export function buildLaunchArgs(target: PrTarget | null): string[] {
  *   3. the launch cwd — the in-repo dev flow (`bin/homer`), where cwd already is
  *      the repo.
  *
- * Pure so it can be unit-tested without a real process. Known limitation: on a
- * second `homer` invocation the already-running window keeps the repo it was first
- * launched with (the single-instance path only re-navigates the PR) — full
- * multi-repo switching is out of scope here.
+ * Pure so it can be unit-tested without a real process. Each window records the
+ * result as its own launch context (ADR 0005), so a second `homer` from a
+ * different repo opens a window that resolves against that repo — the earlier
+ * single-window limitation (one repo for the whole app) no longer applies.
  */
 export function resolveRepoPath(
   argv: string[],
