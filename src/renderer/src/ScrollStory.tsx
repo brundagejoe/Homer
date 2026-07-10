@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { motion } from 'motion/react'
 import type { ReactElement, ReactNode } from 'react'
 import { Markdown, InlineMarkdown } from './Markdown'
 import { ReferencePanel } from './GuideReference'
@@ -181,7 +182,17 @@ function ProgressIndicator({ current, total }: { current: number; total: number 
   return (
     <div className="pointer-events-none absolute top-4 right-6 z-10">
       <span className="glass rounded-full border border-hairline px-2.5 py-1 font-mono text-[11px] tabular-nums text-subtle shadow-sm">
-        {formatProgress(current, total)}
+        {/* Keyed by ordinal so each tick springs the new number up a hair,
+            telegraphing the change (§8) without a distracting roll. */}
+        <motion.span
+          key={current}
+          initial={{ opacity: 0.4, y: 2 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          className="inline-block"
+        >
+          {formatProgress(current, total)}
+        </motion.span>
       </span>
     </div>
   )

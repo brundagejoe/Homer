@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
 import { ExternalLink, GitCommitHorizontal, RefreshCw, X } from 'lucide-react'
+import { fadeQuick, springDefault, springSnappy } from './springs'
 import { useKeyboardShortcut } from './useKeyboardShortcut'
 import { HelpOverlay, ShortcutHelp } from './HelpOverlay'
 import { DiffView } from './DiffView'
@@ -234,22 +236,54 @@ function Window({ target }: { target: PrTarget }) {
         <SettingsButton />
         <HelpButton />
       </TitleBar>
-      {staleness.stale && (
-        <StalenessBanner newCommits={staleness.newCommits} refreshing={refreshing} onRefresh={onRefresh} />
-      )}
-      {orphans.length > 0 && (
-        <OrphanedCommentsBanner comments={orphans} onDismiss={workspace.draft.dismissOrphan} />
-      )}
-      {tab === 'activity' && <ActivityView status={status} inline={workspace.inline} />}
-      {tab === 'guide' && (
-        <GuideView
-          guide={guide}
-          onRetry={guide.retry}
-          draft={workspace.draft}
-          diffLoaded={workspace.diffLoaded}
-        />
-      )}
-      {tab === 'diff' && <DiffView workspace={workspace} coverage={guide.coverage} />}
+      {/* Banners materialize in/out along the same vertical path (§7) rather
+          than popping — height+opacity so they push content down as they arrive. */}
+      <AnimatePresence initial={false}>
+        {staleness.stale && (
+          <motion.div
+            key="staleness"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={springSnappy}
+            className="overflow-hidden"
+          >
+            <StalenessBanner newCommits={staleness.newCommits} refreshing={refreshing} onRefresh={onRefresh} />
+          </motion.div>
+        )}
+        {orphans.length > 0 && (
+          <motion.div
+            key="orphans"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={springSnappy}
+            className="overflow-hidden"
+          >
+            <OrphanedCommentsBanner comments={orphans} onDismiss={workspace.draft.dismissOrphan} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* Keyed by tab so switching remounts and fades the incoming view up.
+          Enter-only (no exit wait) keeps the switch instant — directness first (§1). */}
+      <motion.div
+        key={tab}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={fadeQuick}
+        className="flex-1 min-h-0 flex flex-col"
+      >
+        {tab === 'activity' && <ActivityView status={status} inline={workspace.inline} />}
+        {tab === 'guide' && (
+          <GuideView
+            guide={guide}
+            onRetry={guide.retry}
+            draft={workspace.draft}
+            diffLoaded={workspace.diffLoaded}
+          />
+        )}
+        {tab === 'diff' && <DiffView workspace={workspace} coverage={guide.coverage} />}
+      </motion.div>
     </main>
   )
 }
@@ -343,21 +377,33 @@ function OrphanedCommentsBanner({
 function TabBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
   return (
     <div role="tablist" className="flex items-center gap-0.5 p-0.5 rounded-[8px] bg-hover">
-      {TABS.map(t => (
-        <Tooltip key={t.id} content={t.label} shortcut={t.shortcut}>
-          <button
-            role="tab"
-            aria-selected={tab === t.id}
-            onClick={() => onTab(t.id)}
-            className={cn(
-              'px-2.5 py-0.5 rounded-[6px] text-[12px] [-webkit-app-region:no-drag]',
-              tab === t.id ? 'bg-elevated text-fg shadow-sm' : 'text-muted hover:text-fg'
-            )}
-          >
-            {t.label}
-          </button>
-        </Tooltip>
-      ))}
+      {TABS.map(t => {
+        const selected = tab === t.id
+        return (
+          <Tooltip key={t.id} content={t.label} shortcut={t.shortcut}>
+            <button
+              role="tab"
+              aria-selected={selected}
+              onClick={() => onTab(t.id)}
+              className={cn(
+                'relative px-2.5 py-0.5 rounded-[6px] text-[12px] transition-colors [-webkit-app-region:no-drag]',
+                selected ? 'text-fg' : 'text-muted hover:text-fg'
+              )}
+            >
+              {/* Shared-element pill: one indicator that glides between tabs
+                  (§3 interruptible, §7 continuity) instead of a hard class swap. */}
+              {selected && (
+                <motion.div
+                  layoutId="tab-indicator"
+                  transition={springDefault}
+                  className="absolute inset-0 rounded-[6px] bg-elevated shadow-sm"
+                />
+              )}
+              <span className="relative z-[1]">{t.label}</span>
+            </button>
+          </Tooltip>
+        )
+      })}
     </div>
   )
 }
