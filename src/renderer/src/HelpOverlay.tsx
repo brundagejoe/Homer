@@ -23,7 +23,7 @@ export function HelpOverlay({ shortcuts, onClose }: { shortcuts: ShortcutHelp[];
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center"
+      className="fixed inset-0 z-50 scrim flex items-center justify-center"
       onClick={onClose}
     >
       <div

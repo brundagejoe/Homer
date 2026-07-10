@@ -34,7 +34,7 @@ export function Tooltip({ children, content, shortcut, side = 'bottom', disabled
         <BaseTooltip.Positioner side={side} sideOffset={6}>
           <BaseTooltip.Popup
             className={cn(
-              'z-50 max-w-[280px] rounded-[6px] border border-hairline-strong bg-elevated px-2 py-1',
+              'glass z-50 max-w-[280px] rounded-[6px] border border-hairline-strong px-2 py-1',
               'text-[11.5px] text-fg shadow-[0_6px_24px_rgba(0,0,0,0.18)]',
               'origin-[var(--transform-origin)] transition-[transform,opacity] duration-150',
               'data-[starting-style]:opacity-0 data-[ending-style]:opacity-0',

@@ -72,7 +72,7 @@ export function ConfirmHost() {
       <BaseAlertDialog.Portal>
         <BaseAlertDialog.Backdrop
           className={cn(
-            'fixed inset-0 z-50 bg-black/40',
+            'fixed inset-0 z-50 scrim',
             'data-[starting-style]:opacity-0 data-[ending-style]:opacity-0',
             'transition-opacity duration-150 motion-reduce:transition-none'
           )}
@@ -84,7 +84,8 @@ export function ConfirmHost() {
             'shadow-[0_10px_40px_rgba(0,0,0,0.2)] outline-none',
             'data-[starting-style]:opacity-0 data-[ending-style]:opacity-0',
             'data-[starting-style]:scale-95 data-[ending-style]:scale-95',
-            'transition-[opacity,transform] duration-150 motion-reduce:transition-none'
+            'data-[starting-style]:blur-[4px] data-[ending-style]:blur-[4px]',
+            'transition-[opacity,transform,filter] duration-150 motion-reduce:transition-none'
           )}
         >
           <BaseAlertDialog.Title className="m-0 text-[14px] font-semibold text-fg">

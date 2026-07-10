@@ -180,7 +180,7 @@ function ProgressIndicator({ current, total }: { current: number; total: number 
   if (total === 0) return null
   return (
     <div className="pointer-events-none absolute top-4 right-6 z-10">
-      <span className="rounded-full border border-hairline bg-elevated/90 px-2.5 py-1 font-mono text-[11px] tabular-nums text-subtle shadow-sm backdrop-blur">
+      <span className="glass rounded-full border border-hairline px-2.5 py-1 font-mono text-[11px] tabular-nums text-subtle shadow-sm">
         {formatProgress(current, total)}
       </span>
     </div>

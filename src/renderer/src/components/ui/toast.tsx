@@ -60,7 +60,7 @@ function ToastList() {
             key={t.id}
             toast={t}
             className={cn(
-              'relative pointer-events-auto w-[320px] rounded-md border border-hairline-strong border-l-[3px] bg-elevated text-fg',
+              'glass relative pointer-events-auto w-[320px] rounded-md border border-hairline-strong border-l-[3px] text-fg',
               'shadow-[0_10px_30px_rgba(0,0,0,0.18)] px-3 py-2.5',
               'data-[starting-style]:opacity-0 data-[ending-style]:opacity-0',
               'transition-[opacity,transform] duration-200 motion-reduce:transition-none',
