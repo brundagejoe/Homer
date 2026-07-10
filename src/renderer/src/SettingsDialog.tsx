@@ -43,7 +43,8 @@ export function SettingsButton() {
           aria-label="Settings"
           className={cn(
             'inline-flex items-center justify-center h-6 w-6 rounded text-muted',
-            'hover:text-fg hover:bg-hover [-webkit-app-region:no-drag]'
+            'hover:text-fg hover:bg-hover [-webkit-app-region:no-drag]',
+            'transition-transform duration-100 ease-out active:scale-90'
           )}
         >
           <SettingsIcon size={14} strokeWidth={2} />
@@ -78,7 +79,7 @@ export function SettingsButton() {
 function SettingsPanel({ onClose }: { onClose: () => void }) {
   return (
     <>
-      <Dialog.Title className="m-0 text-[14px] font-semibold text-fg">Settings</Dialog.Title>
+      <Dialog.Title className="m-0 type-heading text-fg">Settings</Dialog.Title>
       <div className="mt-3 flex-1 min-h-0 overflow-auto flex flex-col gap-6 pr-1">
         <RepoRootsSection />
         <div className="border-t border-hairline" />
@@ -157,7 +158,7 @@ function RepoRootsSection() {
                 <button
                   onClick={() => onRemove(root)}
                   aria-label={`Remove ${root}`}
-                  className="shrink-0 text-subtle hover:text-fg p-0.5 rounded hover:bg-hover [-webkit-app-region:no-drag]"
+                  className="shrink-0 text-subtle hover:text-fg p-0.5 rounded hover:bg-hover transition-transform duration-100 ease-out active:scale-90 [-webkit-app-region:no-drag]"
                 >
                   <X size={12} strokeWidth={2.4} />
                 </button>

@@ -156,7 +156,7 @@ function CodeSection({
           <span className="font-mono text-[11px] text-subtle tabular-nums">
             {String(section.ordinal).padStart(2, '0')}
           </span>
-          <h2 className="m-0 text-[17px] font-semibold leading-snug">
+          <h2 className="m-0 type-title">
             <InlineMarkdown>{section.title}</InlineMarkdown>
           </h2>
         </header>

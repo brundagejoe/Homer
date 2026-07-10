@@ -3,7 +3,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-1.5 whitespace-nowrap appearance-none rounded-[5px] text-[13px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 disabled:opacity-50 disabled:pointer-events-none [-webkit-app-region:no-drag]',
+  'inline-flex items-center justify-center gap-1.5 whitespace-nowrap appearance-none rounded-[5px] text-[13px] font-medium transition-[background-color,border-color,color,transform] duration-100 ease-out active:scale-[0.97] disabled:active:scale-100 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 disabled:opacity-50 disabled:pointer-events-none [-webkit-app-region:no-drag]',
   {
     variants: {
       variant: {

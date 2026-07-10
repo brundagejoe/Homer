@@ -95,7 +95,7 @@ function NoPrView() {
       </TitleBar>
       <section className="flex-1 grid place-items-center px-6">
         <div className="max-w-md text-center flex flex-col gap-2">
-          <h2 className="m-0 text-[15px] font-semibold">No pull request</h2>
+          <h2 className="m-0 type-section">No pull request</h2>
           <p className="m-0 text-[13px] text-muted">
             Launch a review from your terminal inside a repo:
           </p>
@@ -327,7 +327,7 @@ function OrphanedCommentsBanner({
               <button
                 onClick={() => onDismiss(c.id)}
                 aria-label="Dismiss orphaned comment"
-                className="shrink-0 text-subtle hover:text-fg p-0.5 rounded hover:bg-hover [-webkit-app-region:no-drag]"
+                className="shrink-0 text-subtle hover:text-fg p-0.5 rounded hover:bg-hover transition-transform duration-100 ease-out active:scale-90 [-webkit-app-region:no-drag]"
               >
                 <X size={12} strokeWidth={2.4} />
               </button>
@@ -400,7 +400,7 @@ function ActivityLoaded({
     <section className="flex-1 min-h-0 overflow-auto bg-surface">
       <div className="max-w-3xl mx-auto px-6 py-6 flex flex-col gap-6">
         <header className="flex flex-col gap-2 pb-4 border-b border-hairline">
-          <h1 className="m-0 text-[20px] font-semibold leading-snug">{pr.title}</h1>
+          <h1 className="m-0 type-display">{pr.title}</h1>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-subtle">
             <StateBadge state={pr.state} />
             <span className="font-medium text-fg">{pr.author}</span>
@@ -422,7 +422,7 @@ function ActivityLoaded({
         </header>
 
         <div className="flex flex-col gap-2">
-          <h3 className="m-0 text-[14px] font-semibold">Description</h3>
+          <h3 className="m-0 type-heading">Description</h3>
           {hasBody ? (
             <Markdown>{pr.body}</Markdown>
           ) : (
@@ -432,7 +432,7 @@ function ActivityLoaded({
 
         {conversation.length > 0 && (
           <div className="flex flex-col gap-2">
-            <h3 className="m-0 text-[14px] font-semibold">
+            <h3 className="m-0 type-heading">
               Conversation <span className="text-subtle font-normal">· {conversation.length}</span>
             </h3>
             <div className="flex flex-col gap-2">
@@ -450,7 +450,7 @@ function ActivityLoaded({
 
         {inlineByFile.size > 0 && (
           <div className="flex flex-col gap-2">
-            <h3 className="m-0 text-[14px] font-semibold">Review threads</h3>
+            <h3 className="m-0 type-heading">Review threads</h3>
             {[...inlineByFile.entries()].map(([path, comments]) => (
               <div key={path} className="flex flex-col gap-1.5">
                 <span className="text-[11px] uppercase tracking-wide text-muted">{path}</span>
@@ -506,7 +506,7 @@ function OpenOnGithubButton({ url }: { url: string }) {
         target="_blank"
         rel="noreferrer"
         aria-label="Open PR on GitHub"
-        className="inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-fg px-1.5 py-0.5 rounded hover:bg-hover [-webkit-app-region:no-drag]"
+        className="inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-fg px-1.5 py-0.5 rounded hover:bg-hover transition-transform duration-100 ease-out active:scale-90 [-webkit-app-region:no-drag]"
       >
         <ExternalLink size={12} strokeWidth={2.2} />
       </a>

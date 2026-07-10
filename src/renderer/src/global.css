@@ -57,7 +57,41 @@
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Let the system font swap in its optical-size variant per rendered size
+     (§15) — it ships tracking/legibility tuning we'd otherwise hand-fake. */
+  font-optical-sizing: auto;
   color: var(--color-fg);
+}
+
+/* Type scale (§15): size, leading, and tracking bundled per step. Tracking is
+   size-specific — negative on large display text, easing toward 0 at body;
+   small UI labels keep slight positive tracking (see .section-label / .pill).
+   Sizes are in rem (root = 13px) so the whole scale tracks the root size.
+   Each class carries its own weight/leading, so drop any Tailwind
+   font-*/leading-*/text-[..] utilities where you apply one. */
+.type-display {
+  font-size: 1.538rem; /* ~20px */
+  line-height: 1.15;
+  letter-spacing: -0.021em;
+  font-weight: 600;
+}
+.type-title {
+  font-size: 1.308rem; /* ~17px */
+  line-height: 1.2;
+  letter-spacing: -0.017em;
+  font-weight: 600;
+}
+.type-section {
+  font-size: 1.154rem; /* ~15px */
+  line-height: 1.25;
+  letter-spacing: -0.012em;
+  font-weight: 600;
+}
+.type-heading {
+  font-size: 1.077rem; /* ~14px */
+  line-height: 1.3;
+  letter-spacing: -0.008em;
+  font-weight: 600;
 }
 
 /* Dark mode. Override the @theme SOURCE tokens (--color-*), not just the legacy
@@ -252,8 +286,8 @@ a {
   line-height: 1.25;
 }
 
-.md h1 { font-size: 1.4em; }
-.md h2 { font-size: 1.2em; }
+.md h1 { font-size: 1.4em; letter-spacing: -0.014em; }
+.md h2 { font-size: 1.2em; letter-spacing: -0.01em; }
 .md h3 { font-size: 1.05em; }
 .md h4 { font-size: 1em; }
 .md h5,
@@ -400,4 +434,43 @@ a {
 .row:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+
+/* ── Accessibility: honor the system reduction signals (§14) ──────────────
+   Reduced-transparency fallbacks live with the glass surfaces that need them
+   (added when translucency lands), not here. */
+
+/* Reduced motion: strip movement but keep state changes instant and legible.
+   Neutralizes CSS transitions, the refresh spinner, toast/dialog springs, and
+   smooth-scroll — feedback survives as an immediate cut, not a slide. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  html {
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Increased contrast: firm up the hairlines and secondary text the UI leans on
+   so structure reads without relying on subtle low-opacity edges. */
+@media (prefers-contrast: more) {
+  :root {
+    --color-hairline: rgba(0, 0, 0, 0.28);
+    --color-hairline-strong: rgba(0, 0, 0, 0.5);
+    --color-muted: rgba(0, 0, 0, 0.78);
+    --color-subtle: rgba(0, 0, 0, 0.62);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-hairline: rgba(255, 255, 255, 0.3);
+      --color-hairline-strong: rgba(255, 255, 255, 0.55);
+      --color-muted: rgba(255, 255, 255, 0.82);
+      --color-subtle: rgba(255, 255, 255, 0.65);
+    }
+  }
 }
